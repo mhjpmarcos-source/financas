@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Finanças">
+<meta name="theme-color" content="#0f5c4a">
+<title>Finanças · teste de conexão</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <h1>Finanças</h1>
+  <p>Fase 0 · teste de conexão com o Google Drive</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Este aparelho</h2>
+    <dl id="envList" class="env"></dl>
+  </section>
+
+  <section class="card" id="secCfg">
+    <h2>2. Configuração</h2>
+    <p class="hint">Cole o <b>ID do cliente</b> criado no Google Cloud (termina em <code>.apps.googleusercontent.com</code>). Ele não é senha e fica salvo neste aparelho.</p>
+    <label for="cid">ID do cliente OAuth</label>
+    <input id="cid" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="000000-xxxx.apps.googleusercontent.com">
+    <button id="btnSaveCid" class="btn">Salvar</button>
+    <p class="hint">No Google Cloud, cadastre exatamente:<br>
+      Origem JavaScript autorizada: <code id="origin"></code><br>
+      URI de redirecionamento autorizado: <code id="redir"></code></p>
+  </section>
+
+  <section class="card">
+    <h2>3. Entrar com o Google</h2>
+    <p id="authStatus" class="status">Não conectado.</p>
+    <div class="row">
+      <button id="btnPopup" class="btn primary" disabled>Entrar (janela)</button>
+      <button id="btnRedirect" class="btn primary" disabled>Entrar (redirecionamento)</button>
+    </div>
+    <p class="hint">Teste os dois botões no Safari e depois no app instalado na Tela de Início. Confira se a conta mostrada é a do Drive que você quer usar.</p>
+    <button id="btnLogout" class="btn ghost" hidden>Sair</button>
+  </section>
+
+  <section class="card">
+    <h2>4. Teste do Drive</h2>
+    <p class="hint">Grava e lê o arquivo <code>teste-conexao.json</code> na pasta <b>Finanças (app)</b> do seu Drive. O app só enxerga arquivos que ele mesmo criou; o resto do seu Drive fica fora do alcance dele.</p>
+    <div class="row">
+      <button id="btnWrite" class="btn primary" disabled>Gravar teste</button>
+      <button id="btnRead" class="btn" disabled>Ler do Drive</button>
+    </div>
+    <div id="driveOut"></div>
+  </section>
+
+  <section class="card">
+    <h2>Registro</h2>
+    <ol id="log" class="log"></ol>
+    <button id="btnCopy" class="btn ghost">Copiar registro</button>
+  </section>
+</main>
+</body>
+</html>

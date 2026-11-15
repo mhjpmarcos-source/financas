@@ -1,0 +1,7 @@
+# faturas reais e dados pessoais nunca entram no repositório
+*.pdf
+amostras-reais/
+dados/
+*.json.bak
+.DS_Store
+node_modules/
