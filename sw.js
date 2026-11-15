@@ -1,6 +1,6 @@
 // Guarda só os arquivos do próprio app para abrir sem internet.
 // Nada que venha do Google (login, Drive) é guardado aqui.
-const VERSION = 'fase0-1';
+const VERSION = 'fase0-2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
