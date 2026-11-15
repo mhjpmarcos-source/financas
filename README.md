@@ -3,82 +3,62 @@
 Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados no **Google Drive de quem usa**. Feito primeiro para o celular (iPhone), com adaptação para computador.
 
 - Um usuário por instalação.
-- Nenhum dado fica neste repositório nem em servidor de terceiros: o código é público, os dados ficam no Drive de cada pessoa.
-- O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`), na pasta **Finanças (app)**.
+- Nenhum dado fica neste repositório nem em servidor de terceiros: o código é público, os dados ficam no Drive de cada pessoa, na pasta **Finanças (app)**, arquivo `financas-dados.json`.
+- O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
+- Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-> **Estado atual: Fase 0.** Esta versão só testa o login com o Google, a gravação no Drive e a instalação no iPhone. O sistema financeiro vem nas próximas fases.
+**Versão atual: 0.1 (Fase 1 — núcleo).** Login com o Google, sincronização aparelho ↔ Drive, assistente de primeira configuração (contas, cartões, categorias, CPF para faturas com senha), lançamentos (despesa, cartão, receita, transferência), saldos e faturas, backup e importação do sistema antigo. Próximas fases: interface completa, leitura de fatura em PDF, segurança extra.
 
 ---
+
+## Como usar
+
+- **Usar a instalação de outra pessoa:** abra o endereço que ela passar, toque em **Entrar com o Google** e siga o assistente. Enquanto o app dela estiver "em teste" no Google, ela precisa cadastrar o seu e-mail como usuário de teste. Ela não tem acesso aos seus dados.
+- **No iPhone:** abra o endereço no Safari → Compartilhar → **Adicionar à Tela de Início**.
+- **Publicar a sua própria cópia** (independente de qualquer pessoa): siga as etapas abaixo.
 
 ## Como publicar a sua cópia
 
-São três etapas, todas gratuitas. Leva uns 20 minutos.
+Três etapas gratuitas, uns 20 minutos.
 
 ### 1. GitHub (onde o app fica hospedado)
 
-Use **a sua conta** do GitHub.
+**Opção A — GitHub Desktop (Mac/Windows)**
 
-1. Entre em github.com e crie um repositório novo (botão **New**):
-   - Nome: `financas`
-   - Visibilidade: **Public** (o GitHub Pages gratuito exige público; não há dados no código).
-   - Não marque nenhuma opção de README.
-2. Na página do repositório vazio, clique em **uploading an existing file** e arraste **todo o conteúdo** desta pasta (inclusive a pasta `icons`). Clique em **Commit changes**.
-   - O arquivo `.gitignore` começa com ponto e o Finder esconde. Para vê-lo, aperte ⌘⇧. na janela do Finder. Ele impede que PDFs de fatura subam por engano.
-3. Vá em **Settings → Pages**. Em *Build and deployment*, escolha *Deploy from a branch*, branch `main`, pasta `/ (root)`, e salve.
-4. Em um ou dois minutos o app fica no ar em `https://SEU-USUARIO.github.io/financas/`.
+1. Faça um *fork* deste repositório no site do GitHub (botão **Fork**) e clone pelo GitHub Desktop (**File → Clone Repository**). Guarde a pasta **fora** do iCloud/OneDrive (ex.: uma pasta na sua pasta pessoal), porque esses serviços corrompem repositórios.
+2. No site, em **Settings → Pages**: *Deploy from a branch*, branch `main`, pasta `/ (root)`, **Save**. O repositório precisa ser **público** (exigência do plano gratuito).
+3. Em um ou dois minutos o app fica em `https://SEU-USUARIO.github.io/NOME-DO-REPOSITORIO/`.
 
-### 2. Google Cloud (para o app poder entrar no seu Drive)
+**Opção B — só pelo site:** **Fork** e depois o passo 2 acima.
 
-Isto cria a "identidade" do app perante o Google. Não dá ao app acesso a nada sozinho; cada pessoa autoriza na hora de entrar.
+### 2. Google Cloud (para o app poder entrar no Drive)
 
-1. Entre em console.cloud.google.com com uma conta Google (pode ser uma conta Gmail comum).
-2. Crie um projeto: menu do topo → **Novo projeto** → nome `Financas` → Criar.
-3. Ative a API do Drive: **APIs e serviços → Biblioteca** → procure "Google Drive API" → **Ativar**.
-4. Configure a tela de consentimento: **Google Auth Platform** (ou "Tela de permissão OAuth") → Começar:
-   - Nome do app: `Finanças`; e-mail de suporte: o seu.
-   - Público: **Externo**.
-   - Contato: o seu e-mail. Aceite os termos e crie.
-5. Em **Público** (Audience) → *Usuários de teste* → **Adicionar usuários**: coloque o e-mail da conta Google cujo Drive vai guardar os dados. Enquanto o app estiver "em teste", só esses e-mails conseguem entrar (até 100).
-6. Em **Acesso a dados** (Data access) → **Adicionar ou remover escopos** → marque `.../auth/drive.file` → Atualizar → Salvar.
-7. Em **Clientes** → **Criar cliente**:
-   - Tipo: **Aplicativo da Web**; nome: `Finanças web`.
-   - **Origens JavaScript autorizadas**: `https://SEU-USUARIO.github.io`
-   - **URIs de redirecionamento autorizados**: `https://SEU-USUARIO.github.io/financas/` (com a barra no fim)
-   - Criar. Copie o **ID do cliente** (termina em `.apps.googleusercontent.com`). Não precisa da "chave secreta".
-
-O próprio app mostra, na seção 2, os dois endereços exatos para copiar.
+1. Entre em console.cloud.google.com (um Gmail comum serve) e crie um projeto.
+2. Ative a **Google Drive API** (busca no topo → Ativar).
+3. **Google Auth Platform → Começar**: nome do app, e-mail de suporte, público **Externo**.
+4. **Público-alvo → Usuários de teste → Add users**: o e-mail de quem vai usar. Só esses e-mails entram enquanto o app estiver em teste (até 100).
+5. **Acesso a dados → Adicionar ou remover escopos**: marque `.../auth/drive.file` → Atualizar → Salvar.
+6. **Clientes → Criar cliente → Aplicativo da Web**:
+   - Origens JavaScript autorizadas: `https://SEU-USUARIO.github.io`
+   - URIs de redirecionamento autorizados: `https://SEU-USUARIO.github.io/NOME-DO-REPOSITORIO/` (com a barra no fim)
+   - Copie o **ID do cliente**. A chave secreta não é usada; não guarde nem publique.
 
 ### 3. Colocar o ID do cliente no app
 
-Escolha uma das opções:
-- **Pela tela:** abra o app, cole o ID na seção 2 e toque em Salvar (vale para aquele aparelho).
-- **No código:** edite `config.js` no GitHub e preencha `clientId`. Assim vale para todos os aparelhos.
+Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o ID na tela (vale só para aquele aparelho).
 
 ---
 
-## Roteiro de teste da Fase 0 (iPhone)
+## Para quem mexe no código
 
-Anote o resultado de cada linha. Use o botão **Copiar registro** do app para mandar os detalhes.
-
-| # | Onde | Ação | Esperado |
-|---|---|---|---|
-| 1 | Safari | Abrir o endereço do app | Seção 1 mostra "Navegador", "Endereço seguro: Sim" |
-| 2 | Safari | Entrar (janela) | Abre a escolha de conta Google e volta "Conectado como …" |
-| 3 | Safari | Gravar teste | "Gravação no Drive concluída" e uma linha na tabela |
-| 4 | Safari | Sair, depois Entrar (redirecionamento) | Vai ao Google e volta conectado |
-| 5 | Safari | Compartilhar → Adicionar à Tela de Início | Ícone "Finanças" aparece |
-| 6 | App instalado | Abrir pelo ícone | Seção 1 mostra "App instalado" |
-| 7 | App instalado | Entrar (janela) | Funciona ou não? |
-| 8 | App instalado | Entrar (redirecionamento) | Funciona ou não? |
-| 9 | App instalado | Gravar teste | Nova linha com "app instalado" |
-| 10 | Computador | Abrir o endereço, entrar, Ler do Drive | Mostra as gravações feitas no iPhone |
-| 11 | Google Drive | Abrir a pasta **Finanças (app)** | Arquivo `teste-conexao.json` presente |
-| 12 | iPhone, modo avião | Abrir o app instalado | A tela abre mesmo sem internet |
-
-As linhas 7 e 8 decidem qual forma de login o sistema vai usar no iPhone.
-
-## Privacidade
-
-- O acesso ao Drive dura 1 hora; depois o app pede para entrar de novo.
-- "Sair" revoga o acesso daquele aparelho.
-- Faturas em PDF (fases seguintes) são lidas no próprio aparelho e não são enviadas a nenhum servidor.
+- Sem etapa de compilação: HTML, CSS e JavaScript puros (módulos em `js/`).
+  - `model.js` — formato dos dados, plano de contas padrão, junção de cópias, importação de backups.
+  - `calc.js` — fatura do cartão, saldos, resumo do mês.
+  - `auth.js` — login com o Google (janela; redirecionamento como reserva).
+  - `drive.js` — leitura e gravação no Drive.
+  - `store.js` — cópia no aparelho (IndexedDB).
+  - `sync.js` — sincronização aparelho ↔ Drive.
+  - `app.js` — telas.
+- Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.
+- Teste do modelo: `cd tests && node model.test.mjs`.
+- Nunca coloque faturas, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`).
