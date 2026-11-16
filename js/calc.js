@@ -85,3 +85,50 @@ export function monthSummary(S, m) {
   });
   return { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp) };
 }
+
+/* compras de uma fatura (cartão + competência) */
+export function faturaOf(S, cardId, comp) {
+  const list = S.tx.filter(t => t.type === 'cred' && t.accountId === cardId && txComp(S, t) === comp).sort((a, b) => b.date.localeCompare(a.date));
+  const f = faturas(S).find(x => x.cardId === cardId && x.comp === comp);
+  const card = S.accounts.find(a => a.id === cardId);
+  return {
+    list, total: f ? f.total : 0, status: f ? f.status : 'pend', accountId: f ? f.accountId : (card && card.payAccount),
+    date: f ? f.date : clampDay(comp, +(card && card.dueDay) || 10), key: cardId + '|' + comp
+  };
+}
+
+/* despesas do mês por grupo e categoria (débito no mês + cartão pela competência) */
+export function byCategory(S, m, kind = 'despesa') {
+  const groups = {};
+  S.tx.forEach(t => {
+    const isExp = (t.type === 'deb' && mOf(t.date) === m) || (t.type === 'cred' && txComp(S, t) === m);
+    const isRec = t.type === 'rec' && mOf(t.date) === m;
+    if (!(kind === 'despesa' ? isExp : isRec)) return;
+    const it = S.items.find(i => i.id === t.itemId), g = it && S.groups.find(x => x.id === it.groupId);
+    const gk = g ? g.id : '_', ik = it ? it.id : '_';
+    const G = groups[gk] = groups[gk] || { id: gk, name: g ? g.name : 'Sem categoria', color: g ? g.color : '#90a4ae', total: 0, items: {} };
+    G.total += t.amount;
+    const I = G.items[ik] = G.items[ik] || { id: ik, name: it ? it.name : 'Sem categoria', total: 0, n: 0 };
+    I.total += t.amount; I.n++;
+  });
+  return Object.values(groups).map(g => ({ ...g, total: r2(g.total), items: Object.values(g.items).map(i => ({ ...i, total: r2(i.total) })).sort((a, b) => b.total - a.total) }))
+    .sort((a, b) => b.total - a.total);
+}
+
+/* receitas e despesas dos n meses que terminam em `end` */
+export function monthSeries(S, end, n) {
+  return Array.from({ length: n }, (_, i) => { const m = mAdd(end, i - n + 1); return { m, ...monthSummary(S, m) }; });
+}
+
+/* busca: descrição, categoria, conta ou valor */
+export function search(S, q) {
+  const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const num = parseMoney(q);
+  return S.tx.filter(t => {
+    const it = S.items.find(i => i.id === t.itemId), acc = S.accounts.find(a => a.id === t.accountId);
+    const hay = norm([t.desc, it && it.name, acc && acc.name, String(t.amount).replace('.', ',')].join(' '));
+    return words.every(w => hay.includes(w)) || (num > 0 && Math.abs(t.amount - num) < 0.005);
+  }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 200);
+}

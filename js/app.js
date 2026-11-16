@@ -5,7 +5,7 @@ import * as drive from './drive.js';
 import * as M from './model.js';
 import * as C from './calc.js';
 
-export const VERSION = '0.1.2';
+export const VERSION = '0.2.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -14,7 +14,7 @@ const app = () => $('#app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const S = () => sync.state();
 
-let ui = { tab: 'lanc', month: M.todayISO().slice(0, 7) };
+let ui = { tab: 'lanc', month: M.todayISO().slice(0, 7), sub: null, q: '', catKind: 'despesa' };
 let toastT = null;
 function toast(msg, bad) {
   const t = $('#toast'); t.textContent = msg; t.className = 'toast on' + (bad ? ' bad' : '');
@@ -25,6 +25,7 @@ const confirmBox = msg => Promise.resolve(window.confirm(msg));
 /* ---------- ícones ---------- */
 const ICON = {
   lanc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+  resumo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   contas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/></svg>',
   ajustes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>'
 };
@@ -227,16 +228,18 @@ async function finishWizard() {
 /* ---------- telas principais ---------- */
 function render() {
   if (!S() || !S().config.setupDone) return route();
-  const tabs = [['lanc', 'Lançamentos'], ['contas', 'Contas'], ['ajustes', 'Ajustes']];
-  const title = { lanc: 'Lançamentos', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
-  app().innerHTML = `<div class="shell"><header class="top"><h1>${title}</h1><button class="chip" id="chip"><i></i><span></span></button></header>
+  const tabs = [['lanc', 'Lançamentos'], ['resumo', 'Resumo'], ['contas', 'Contas'], ['ajustes', 'Ajustes']];
+  const title = ui.sub === 'cats' ? 'Categorias' : { lanc: 'Lançamentos', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
+  app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="chip" id="chip"><i></i><span></span></button></header>
     <main class="page" id="page"></main>
-    ${ui.tab === 'lanc' ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
+    ${ui.tab === 'lanc' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ICON[k]}<span>${l}</span></button>`).join('')}</nav></div>`;
-  app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; render(); window.scrollTo(0, 0); } };
+  app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.sub = null; ui.q = ''; render(); window.scrollTo(0, 0); } };
   $('#chip').onclick = chipAction;
+  if ($('#back')) $('#back').onclick = () => { ui.sub = null; render(); };
   if ($('#fab')) $('#fab').onclick = () => txSheet();
-  ({ lanc: pageLanc, contas: pageContas, ajustes: pageAjustes })[ui.tab]();
+  if (ui.sub === 'cats') pageCategorias();
+  else ({ lanc: pageLanc, resumo: pageResumo, contas: pageContas, ajustes: pageAjustes })[ui.tab]();
   renderChip(sync.currentStatus());
 }
 
@@ -261,39 +264,70 @@ function reconnect() {
   auth.signIn().then(() => { toast('Conectado.'); sync.schedule(50); }).catch(e => toast(e.message, true));
 }
 
-/* ----- lançamentos ----- */
+/* ----- utilidades de tela ----- */
 const TYPE = { rec: 'Receita', deb: 'Despesa', cred: 'Cartão', trf: 'Transferência' };
 const accById = id => S().accounts.find(a => a.id === id);
 const itemById = id => S().items.find(i => i.id === id);
 const groupOf = item => item && S().groups.find(g => g.id === item.groupId);
+const monthNav = m => `<div class="month"><button data-m="-1" aria-label="Mês anterior">‹</button><b>${C.monthLabel(m)}</b><button data-m="1" aria-label="Próximo mês">›</button></div>`;
+const shortM = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m.slice(5) - 1] + '/' + m.slice(2, 4);
 
+function txRow(t, showDate) {
+  const it = itemById(t.itemId), g = groupOf(it), acc = accById(t.accountId);
+  const title = t.desc || (it ? it.name : (t.type === 'trf' ? 'Transferência' : 'Sem categoria'));
+  const sub = [showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) : '', t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
+  const tags = (t.seriesId ? `<span class="tag info">${t.seriesIdx}/${t.seriesN}</span>` : '') + (t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : '');
+  return `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
+    <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${tags}</small></span>
+    <span class="num ${t.type === 'rec' ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : '−'}${C.brl(t.amount)}</span></li>`;
+}
+
+/* escolha entre opções (ex.: "só este" / "este e os seguintes"); devolve o valor ou null */
+function askChoice(title, msg, options) {
+  return new Promise(res => {
+    const box = document.createElement('div');
+    box.className = 'sheet ask';
+    box.innerHTML = `<div class="panel" role="dialog" aria-modal="true"><h2>${esc(title)}</h2>${msg ? `<p class="hint">${esc(msg)}</p>` : ''}
+      ${options.map((o, i) => `<button class="btn block ${o.danger ? 'danger' : i === 0 ? 'primary' : ''}" data-v="${i}" style="margin-top:8px">${esc(o.label)}</button>`).join('')}
+      <button class="btn block ghost" data-v="-1" style="margin-top:8px">Cancelar</button></div>`;
+    document.body.appendChild(box);
+    box.onclick = e => {
+      const b = e.target.closest('[data-v]'); if (!b && e.target !== box) return;
+      const v = b ? +b.dataset.v : -1; box.remove(); res(v >= 0 ? options[v].value : null);
+    };
+  });
+}
+
+/* ----- lançamentos ----- */
 function pageLanc() {
-  const st = S(), m = ui.month;
-  const sum = C.monthSummary(st, m);
-  const list = st.tx.filter(t => ['rec', 'deb', 'trf'].includes(t.type) ? C.mOf(t.date) === m : t.type === 'cred' ? C.txComp(st, t) === m : false)
-    .sort((a, b) => (b.date.localeCompare(a.date)) || ((b.created || 0) - (a.created || 0)));
-  let html = `<div class="month"><button data-m="-1" aria-label="Mês anterior">‹</button><b>${C.monthLabel(m)}</b><button data-m="1" aria-label="Próximo mês">›</button></div>
-    <div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
-    <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
-    <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>`;
-  if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
-  else {
-    let day = '';
-    html += '<div class="card" style="padding-top:2px">';
-    list.forEach(t => {
-      if (t.date !== day) { if (day) html += '</ul>'; day = t.date; html += `<div class="day">${new Date(t.date + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}</div><ul class="list">`; }
-      const it = itemById(t.itemId), g = groupOf(it), acc = accById(t.accountId);
-      const title = t.desc || (it ? it.name : (t.type === 'trf' ? 'Transferência' : 'Sem categoria'));
-      const sub = [t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
-      const sign = t.type === 'rec' ? '' : t.type === 'trf' ? '' : '−';
-      const cls = t.type === 'rec' ? 'pos' : t.type === 'trf' ? '' : '';
-      html += `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
-        <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : ''}</small></span>
-        <span class="num ${cls}">${sign}${C.brl(t.amount)}</span></li>`;
-    });
-    html += '</ul></div>';
+  const st = S(), m = ui.month, q = ui.q || '';
+  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"></div>`;
+  if (q.trim()) {
+    const res = C.search(st, q);
+    html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
+    if (res.length) html += `<div class="card" style="padding-top:2px"><ul class="list">${res.map(t => txRow(t, true)).join('')}</ul></div>`;
+  } else {
+    const sum = C.monthSummary(st, m);
+    const list = st.tx.filter(t => ['rec', 'deb', 'trf'].includes(t.type) ? C.mOf(t.date) === m : t.type === 'cred' ? C.txComp(st, t) === m : false)
+      .sort((a, b) => (b.date.localeCompare(a.date)) || ((b.created || 0) - (a.created || 0)));
+    html += monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
+      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
+      <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
+      <p class="hint">Compras no cartão aparecem no mês da fatura.</p>`;
+    if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
+    else {
+      let day = '';
+      html += '<div class="card" style="padding-top:2px">';
+      list.forEach(t => {
+        if (t.date !== day) { if (day) html += '</ul>'; day = t.date; html += `<div class="day">${new Date(t.date + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: t.date.slice(0, 7) === m ? undefined : '2-digit' })}</div><ul class="list">`; }
+        html += txRow(t);
+      });
+      html += '</ul></div>';
+    }
   }
   $('#page').innerHTML = html;
+  const qi = $('#q');
+  qi.oninput = () => { ui.q = qi.value; const pos = qi.selectionStart; pageLanc(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
   $('#page').onclick = e => {
     const mb = e.target.closest('[data-m]'); if (mb) { ui.month = C.mAdd(ui.month, +mb.dataset.m); return pageLanc(); }
     const li = e.target.closest('[data-tx]'); if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx));
@@ -320,35 +354,54 @@ function openSheet(html, bind) {
 }
 function closeSheet() { const sh = $('#sheet'); sh.hidden = true; sh.innerHTML = ''; }
 
-function txSheet(tx) {
+function txSheet(tx, preset) {
   const st = S();
   const hasCards = st.accounts.some(a => a.nature === 'credito' && a.active !== false);
-  let type = tx ? tx.type : 'deb';
+  let type = tx ? tx.type : (preset && preset.type) || 'deb';
   const draw = panel => {
     const kind = type === 'rec' ? 'receita' : 'despesa';
     const defDate = tx ? tx.date : (ui.month === M.todayISO().slice(0, 7) ? M.todayISO() : ui.month + '-01');
-    const accSel = tx && tx.type === type ? tx.accountId : '';
-    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>
-      <div class="seg" id="seg">${['deb', 'cred', 'rec', 'trf'].filter(k => k !== 'cred' || hasCards || type === 'cred').map(k => `<button type="button" data-type="${k}" aria-pressed="${k === type}">${TYPE[k]}</button>`).join('')}</div>
-      <label for="f-val">Valor (R$)</label><input id="f-val" inputmode="decimal" value="${tx ? String(tx.amount).replace('.', ',') : ''}" placeholder="0,00">
+    const accSel = tx && tx.type === type ? tx.accountId : (preset && preset.accountId) || '';
+    const series = tx && tx.seriesId ? `<p class="hint">${tx.seriesKind === 'parc' ? 'Parcela' : 'Repetição'} ${tx.seriesIdx} de ${tx.seriesN}.</p>` : '';
+    const repeat = tx ? '' : type === 'cred'
+      ? `<label for="f-n">Parcelas</label><select id="f-n">${Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${i ? (i + 1) + 'x' : 'À vista'}</option>`).join('')}</select>`
+      : `<label class="check"><input type="checkbox" id="f-rep"> Repetir todo mês</label><div id="f-repbox" hidden><label for="f-n">Por quantos meses (contando este)</label><input id="f-n" type="number" inputmode="numeric" min="2" max="120" value="12"></div>`;
+    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>${series}
+      <div class="seg" id="seg">${['deb', 'cred', 'rec', 'trf'].filter(k => k !== 'cred' || hasCards || type === 'cred').map(k => `<button type="button" data-type="${k}" aria-pressed="${k === type}" ${tx && tx.seriesId && k !== type ? 'disabled' : ''}>${TYPE[k]}</button>`).join('')}</div>
+      <label for="f-val" id="f-vallbl">Valor (R$)</label><input id="f-val" inputmode="decimal" value="${tx ? String(tx.amount).replace('.', ',') : ''}" placeholder="0,00">
       <label for="f-date">${type === 'cred' ? 'Data da compra' : 'Data'}</label><input id="f-date" type="date" value="${esc(defDate)}">
       <label for="f-desc">Descrição</label><input id="f-desc" value="${esc(tx ? tx.desc : '')}" placeholder="Opcional">
       ${type === 'trf' ? `<label>De</label><select id="f-acc">${optAccounts('debito', accSel)}</select><label>Para</label><select id="f-to">${optAccounts('debito', tx && tx.toAccountId)}</select>`
         : `<label for="f-item">Categoria</label><select id="f-item"><option value="">Escolha…</option>${optItems(kind, tx && tx.itemId)}</select>
            <label for="f-acc">${type === 'cred' ? 'Cartão' : 'Conta'}</label><select id="f-acc">${optAccounts(type === 'cred' ? 'credito' : 'debito', accSel)}</select>`}
-      ${type === 'cred' ? '<p class="hint" id="f-comp"></p>' : `<label class="check"><input type="checkbox" id="f-pend" ${tx && tx.status === 'pend' ? 'checked' : ''}> Ainda não ${type === 'rec' ? 'recebido' : 'pago'} (pendente)</label>`}
+      ${type === 'cred' ? '' : `<label class="check"><input type="checkbox" id="f-pend" ${tx && tx.status === 'pend' ? 'checked' : ''}> Ainda não ${type === 'rec' ? 'recebido' : 'pago'} (pendente)</label>`}
+      ${repeat}<p class="hint" id="f-prev"></p>
       <div class="actions">${tx ? '<button class="btn danger" id="f-del">Excluir</button>' : ''}<button class="btn" id="f-cancel">Cancelar</button><button class="btn primary" id="f-save">Salvar</button></div>`;
-    panel.querySelector('#seg').onclick = e => { const b = e.target.closest('[data-type]'); if (b) { type = b.dataset.type; draw(panel); } };
-    const compHint = () => {
-      const h = panel.querySelector('#f-comp'); if (!h) return;
-      const card = accById(panel.querySelector('#f-acc').value), d = panel.querySelector('#f-date').value;
-      h.textContent = card && d ? `Entra na fatura de ${C.monthLabel(C.cardCycle(card, d).comp).toLowerCase()}.` : '';
+    panel.querySelector('#seg').onclick = e => { const b = e.target.closest('[data-type]'); if (b && !b.disabled) { type = b.dataset.type; draw(panel); } };
+    const nOf = () => { const n = panel.querySelector('#f-n'); const r = panel.querySelector('#f-rep'); return n && (type === 'cred' || (r && r.checked)) ? Math.max(1, Math.min(120, +n.value || 1)) : 1; };
+    const preview = () => {
+      const h = panel.querySelector('#f-prev'), n = nOf(), v = C.parseMoney(panel.querySelector('#f-val').value), d = panel.querySelector('#f-date').value;
+      const rb = panel.querySelector('#f-repbox'); if (rb) rb.hidden = !panel.querySelector('#f-rep').checked;
+      panel.querySelector('#f-vallbl').textContent = type === 'cred' && n > 1 ? 'Valor total da compra (R$)' : 'Valor (R$)';
+      let txt = '';
+      if (type === 'cred') {
+        const card = accById(panel.querySelector('#f-acc').value);
+        if (card && d) {
+          const c0 = C.cardCycle(card, d).comp;
+          txt = n > 1 ? `${n}x de ${C.brl(M.splitAmount(v || 0, n)[1])}, nas faturas de ${shortM(c0)} a ${shortM(C.mAdd(c0, n - 1))}.` : `Entra na fatura de ${C.monthLabel(c0).toLowerCase()}.`;
+        }
+      } else if (n > 1 && d) txt = `${n} lançamentos de ${C.brl(v || 0)}, de ${shortM(d.slice(0, 7))} a ${shortM(C.mAdd(d.slice(0, 7), n - 1))}.`;
+      h.textContent = txt;
     };
-    panel.oninput = compHint; compHint();
+    panel.oninput = preview; panel.onchange = preview; preview();
     panel.querySelector('#f-cancel').onclick = closeSheet;
     if (tx) panel.querySelector('#f-del').onclick = async () => {
-      if (!(await confirmBox('Excluir este lançamento?'))) return;
-      await sync.commit(s => M.removeRecord(s, 'tx', tx.id)); closeSheet(); toast('Lançamento excluído.');
+      let scope = 'one';
+      if (tx.seriesId) { scope = await askChoice('Excluir', 'Este lançamento faz parte de uma série.', [{ label: 'Só este', value: 'one' }, { label: 'Este e os seguintes', value: 'next', danger: true }]); if (!scope) return; }
+      else if (!(await confirmBox('Excluir este lançamento?'))) return;
+      let n = 1;
+      await sync.commit(s => { const cur = s.tx.find(t => t.id === tx.id); if (!cur) return; if (scope === 'next') n = M.removeSeriesFrom(s, cur); else M.removeRecord(s, 'tx', tx.id); });
+      closeSheet(); toast(n > 1 ? `${n} lançamentos excluídos.` : 'Lançamento excluído.');
     };
     panel.querySelector('#f-save').onclick = async () => {
       const amount = C.parseMoney(panel.querySelector('#f-val').value);
@@ -362,46 +415,109 @@ function txSheet(tx) {
       if (type !== 'trf' && !itemId) return toast('Escolha a categoria.', true);
       if (type === 'trf' && (!toAccountId || toAccountId === accountId)) return toast('Escolha contas diferentes de origem e destino.', true);
       const status = type === 'cred' ? 'pend' : (panel.querySelector('#f-pend').checked ? 'pend' : 'liq');
-      const fields = { type, amount, date, accountId, itemId, toAccountId, desc: panel.querySelector('#f-desc').value, status };
-      ui.month = type === 'cred' ? C.cardCycle(accById(accountId), date).comp : C.mOf(date);
+      const desc = panel.querySelector('#f-desc').value.trim();
+      const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status };
+      const n = nOf();
+      let scope = 'one';
+      if (tx && tx.seriesId) { scope = await askChoice('Salvar alteração', 'Este lançamento faz parte de uma série.', [{ label: 'Só este', value: 'one' }, { label: 'Este e os seguintes', value: 'next' }]); if (!scope) return; }
+      const card = type === 'cred' ? accById(accountId) : null;
+      ui.month = type === 'cred' ? (tx && tx.comp && tx.date === date ? tx.comp : C.cardCycle(card, date).comp) : C.mOf(date);
+      let count = 1;
       await sync.commit(s => {
         if (tx) {
           const cur = s.tx.find(t => t.id === tx.id); if (!cur) return;
-          const n = M.newTx(fields);
-          ['type', 'amount', 'date', 'accountId', 'itemId', 'desc', 'status'].forEach(k => { cur[k] = n[k]; });
+          if (scope === 'next') { const f = { amount, desc, itemId, accountId, status, date }; if (type === 'trf') f.toAccountId = toAccountId; count = M.editSeriesFrom(s, cur, f); return; }
+          const nw = M.newTx(fields);
+          ['type', 'amount', 'date', 'accountId', 'itemId', 'desc', 'status'].forEach(k => { cur[k] = nw[k]; });
           if (type === 'trf') cur.toAccountId = toAccountId; else delete cur.toAccountId;
           if (cur.type !== 'cred') delete cur.comp;
+          else if (!cur.seriesId || tx.date !== date || tx.accountId !== accountId) delete cur.comp;
           M.touch(cur);
-        } else s.tx.push(M.newTx(fields));
+        } else if (n > 1) { const list = M.makeSeries(fields, n, card ? C.cardCycle(card, date).comp : null); s.tx.push(...list); count = list.length; }
+        else s.tx.push(M.newTx(fields));
       });
-      closeSheet(); render(); toast(tx ? 'Lançamento atualizado.' : 'Lançamento salvo.');
+      closeSheet(); render(); toast(tx ? (count > 1 ? `${count} lançamentos atualizados.` : 'Lançamento atualizado.') : (count > 1 ? `${count} lançamentos criados.` : 'Lançamento salvo.'));
     };
   };
   openSheet('', draw);
   setTimeout(() => { const v = $('#f-val'); if (v && !tx) v.focus(); }, 50);
 }
 
-/* ----- contas ----- */
+/* ----- resumo ----- */
+function pageResumo() {
+  const st = S(), m = ui.month;
+  const sum = C.monthSummary(st, m), cats = C.byCategory(st, m), recs = C.byCategory(st, m, 'receita');
+  const series = C.monthSeries(st, m, 6);
+  const max = Math.max(1, ...series.map(x => Math.max(x.rec, x.desp)));
+  const W = 320, H = 150, bw = 18, gap = W / 6;
+  const bars = series.map((x, i) => {
+    const x0 = i * gap + gap / 2 - bw - 1, hr = Math.round(x.rec / max * (H - 30)), hd = Math.round(x.desp / max * (H - 30));
+    return `<rect x="${x0}" y="${H - 20 - hr}" width="${bw}" height="${hr}" rx="3" class="b-rec"><title>Receitas ${shortM(x.m)}: ${C.brl(x.rec)}</title></rect>
+      <rect x="${x0 + bw + 2}" y="${H - 20 - hd}" width="${bw}" height="${hd}" rx="3" class="b-desp"><title>Despesas ${shortM(x.m)}: ${C.brl(x.desp)}</title></rect>
+      <text x="${i * gap + gap / 2}" y="${H - 5}" text-anchor="middle" class="ax ${x.m === m ? 'cur' : ''}">${shortM(x.m)}</text>`;
+  }).join('');
+  const catHTML = (list, total) => list.length ? list.map(g => `<details class="cat"><summary><span class="sw" style="background:${g.color}"></span><span class="grow">${esc(g.name)}</span><span class="num">${C.brl(g.total)}</span></summary>
+      <div class="bar"><i style="width:${Math.max(2, g.total / total * 100).toFixed(1)}%;background:${g.color}"></i></div>
+      <ul class="sublist">${g.items.map(i => `<li><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span></li>`).join('')}</ul></details>`).join('')
+    : '<p class="hint">Nada neste mês.</p>';
+  $('#page').innerHTML = monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
+      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
+      <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
+    <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1)}</div>
+    <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
+      <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
+    <div class="card"><h2>Receitas</h2>${catHTML(recs, sum.rec || 1)}</div></div></div>`;
+  $('#page').onclick = e => { const mb = e.target.closest('[data-m]'); if (mb) { ui.month = C.mAdd(ui.month, +mb.dataset.m); pageResumo(); } };
+}
+
+/* ----- contas e faturas ----- */
 function pageContas() {
   const st = S(), today = M.todayISO();
-  const bal = C.balances(st, today, true), proj = C.balances(st, C.mAdd(today.slice(0, 7), 0) + '-31', false);
+  const bal = C.balances(st, today, true), proj = C.balances(st, today.slice(0, 7) + '-31', false);
   const debs = st.accounts.filter(a => a.nature === 'debito' && a.active !== false);
   const cards = st.accounts.filter(a => a.nature === 'credito' && a.active !== false);
+  const archived = st.accounts.filter(a => a.active === false);
   const total = debs.reduce((s, a) => s + (bal[a.id] || 0), 0);
-  const fats = C.faturas(st);
-  let html = `<div class="card"><h2>Saldo hoje</h2><div class="num" style="font-size:28px;font-weight:700">${C.brl(total)}</div>
+  let html = `<div class="cols"><div class="card"><h2>Saldo hoje</h2><div class="num" style="font-size:28px;font-weight:700">${C.brl(total)}</div>
     <p class="hint">Só o que já foi pago ou recebido.</p><ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
       <small>No fim do mês, com pendentes: ${C.brl(proj[a.id] || 0)}</small></span><span class="num ${bal[a.id] < 0 ? 'neg' : ''}">${C.brl(bal[a.id] || 0)}</span></li>`).join('')}</ul>
     <button class="link" data-new="debito">+ Nova conta</button></div>`;
-  html += `<div class="card"><h2>Cartões</h2>${cards.length ? '' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
-    const comp = C.cardCycle(c, today).comp, f = fats.find(x => x.cardId === c.id && x.comp === comp);
-    return `<li data-acc="${c.id}"><span class="t"><b>${esc(c.name)}</b><small>Fatura de ${C.monthLabel(comp).toLowerCase()} · vence dia ${c.dueDay}</small></span><span class="num">${C.brl(f ? f.total : 0)}</span></li>`;
-  }).join('')}</ul><button class="link" data-new="credito">+ Novo cartão</button></div>`;
+  html += `<div class="card"><h2>Cartões</h2>${cards.length ? '<p class="hint">Toque no cartão para ver as faturas.</p>' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
+    const comp = C.cardCycle(c, today).comp, f = C.faturaOf(st, c.id, comp);
+    return `<li data-card="${c.id}"><span class="t"><b>${esc(c.name)}</b><small>Fatura aberta: ${C.monthLabel(comp).toLowerCase()} · vence ${C.fmtD(f.date)}</small></span><span class="num">${C.brl(f.total)}</span></li>`;
+  }).join('')}</ul><button class="link" data-new="credito">+ Novo cartão</button></div></div>
+  ${archived.length ? `<div class="card"><h2>Arquivadas</h2><ul class="list">${archived.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b><small>${a.nature === 'credito' ? 'Cartão' : 'Conta'} arquivado</small></span></li>`).join('')}</ul></div>` : ''}`;
   $('#page').innerHTML = html;
   $('#page').onclick = e => {
     const n = e.target.closest('[data-new]'); if (n) return accSheet(null, n.dataset.new);
+    const c = e.target.closest('[data-card]'); if (c) return faturaSheet(c.dataset.card);
     const li = e.target.closest('[data-acc]'); if (li) accSheet(accById(li.dataset.acc));
   };
+}
+
+function faturaSheet(cardId, comp) {
+  const card = accById(cardId);
+  comp = comp || C.cardCycle(card, M.todayISO()).comp;
+  openSheet('', panel => {
+    const f = C.faturaOf(S(), cardId, comp), paid = f.status === 'liq';
+    panel.innerHTML = `<h2>${esc(card.name)}</h2>
+      <div class="month"><button data-c="-1" aria-label="Fatura anterior">‹</button><b>Fatura de ${C.monthLabel(comp).toLowerCase()}</b><button data-c="1" aria-label="Próxima fatura">›</button></div>
+      <div class="kpis two"><div class="kpi"><small>Total</small><b class="num">${C.brl(f.total)}</b></div><div class="kpi"><small>Vencimento</small><b>${C.fmtD(f.date)}/${f.date.slice(0, 4)}</b></div></div>
+      <p class="hint">${paid ? '✓ Paga' : 'Ainda não paga'} · paga pela conta ${esc((accById(f.accountId) || {}).name || '—')}.</p>
+      ${f.list.length ? `<ul class="list">${f.list.map(t => txRow(t, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
+      <div class="actions"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button>${f.list.length ? `<button class="btn ${paid ? '' : 'primary'}" id="fa-pay">${paid ? 'Marcar não paga' : 'Marcar paga'}</button>` : ''}</div>`;
+    panel.onclick = async e => {
+      const b = e.target.closest('[data-c]'); if (b) { comp = C.mAdd(comp, +b.dataset.c); return faturaSheet(cardId, comp); }
+      const li = e.target.closest('[data-tx]'); if (li) return txSheet(S().tx.find(t => t.id === li.dataset.tx));
+      if (e.target.id === 'fa-edit') return accSheet(card);
+      if (e.target.id === 'fa-new') return txSheet(null, { type: 'cred', accountId: cardId });
+      if (e.target.id === 'fa-pay') {
+        await sync.commit(s => { s.faturaMeta[f.key] = Object.assign({}, s.faturaMeta[f.key], { status: paid ? 'pend' : 'liq', upd: Date.now() }); });
+        toast(paid ? 'Fatura marcada como não paga.' : 'Fatura marcada como paga. O valor sai do saldo da conta.');
+        faturaSheet(cardId, comp);
+      }
+    };
+  });
 }
 
 function accSheet(acc, nature) {
@@ -414,12 +530,13 @@ function accSheet(acc, nature) {
         <div><label>Vence no dia</label><input id="a-due" inputmode="numeric" value="${acc ? acc.dueDay : ''}"></div></div>
         <label>Fatura paga pela conta</label><select id="a-pay">${optAccounts('debito', acc && acc.payAccount)}</select>`
         : `<label for="a-ini">Saldo inicial (R$)</label><input id="a-ini" inputmode="decimal" value="${acc ? String(acc.initial).replace('.', ',') : ''}" placeholder="0,00">`}
-      <div class="actions">${acc ? '<button class="btn danger" id="a-off">Arquivar</button>' : ''}<button class="btn" id="a-cancel">Cancelar</button><button class="btn primary" id="a-save">Salvar</button></div>
+      <div class="actions">${acc ? `<button class="btn ${acc.active === false ? '' : 'danger'}" id="a-off">${acc.active === false ? 'Reativar' : 'Arquivar'}</button>` : ''}<button class="btn" id="a-cancel">Cancelar</button><button class="btn primary" id="a-save">Salvar</button></div>
       ${acc ? '<p class="hint">Arquivar esconde das listas, mas mantém os lançamentos antigos.</p>' : ''}`;
     panel.querySelector('#a-cancel').onclick = closeSheet;
     if (acc) panel.querySelector('#a-off').onclick = async () => {
-      if (!(await confirmBox(`Arquivar ${acc.name}?`))) return;
-      await sync.commit(s => { const a = s.accounts.find(x => x.id === acc.id); a.active = false; M.touch(a); }); closeSheet(); toast('Arquivado.');
+      const on = acc.active === false;
+      if (!on && !(await confirmBox(`Arquivar ${acc.name}?`))) return;
+      await sync.commit(s => { const a = s.accounts.find(x => x.id === acc.id); a.active = on; M.touch(a); }); closeSheet(); toast(on ? 'Reativado.' : 'Arquivado.');
     };
     panel.querySelector('#a-save').onclick = async () => {
       const name = panel.querySelector('#a-name').value.trim(); if (!name) return toast('Dê um nome.', true);
@@ -434,6 +551,85 @@ function accSheet(acc, nature) {
         else s.accounts.push(M.newAccount(f));
       });
       closeSheet(); toast('Salvo.');
+    };
+  });
+}
+
+/* ----- categorias ----- */
+const KINDS = [['despesa', 'Despesas'], ['receita', 'Receitas'], ['reserva', 'Reservas']];
+const COLORS = ['#e0574f', '#ec7a6a', '#e98b3a', '#d9534f', '#c26b9e', '#b56cc9', '#7b55c7', '#5c6bc0', '#1e88e5', '#00897b', '#2e9e6b', '#7cbf3a', '#8d6e63', '#607d8b', '#9e9e9e'];
+
+function pageCategorias() {
+  const st = S(), kind = ui.catKind || 'despesa';
+  const groups = st.groups.filter(g => g.kind === kind);
+  $('#page').innerHTML = `<div class="seg" id="kseg">${KINDS.map(([k, l]) => `<button data-k="${k}" aria-pressed="${k === kind}">${l}</button>`).join('')}</div>
+    <p class="hint">Toque num grupo ou numa categoria para renomear, mover, juntar ou arquivar.</p>
+    ${groups.map(g => {
+      const items = st.items.filter(i => i.groupId === g.id);
+      return `<div class="card"><div class="ghead" data-g="${g.id}"><span class="sw" style="background:${g.color}"></span><b class="grow">${esc(g.name)}</b><span class="hint">${items.length}</span></div>
+        <ul class="list">${items.map(i => `<li data-i="${i.id}"><span class="t"><b class="${i.active === false ? 'off' : ''}">${esc(i.name)}</b>${i.active === false ? '<small>arquivada</small>' : ''}</span></li>`).join('')}</ul>
+        <button class="link" data-addi="${g.id}">+ Categoria</button></div>`;
+    }).join('')}
+    <button class="btn block" id="addg">+ Novo grupo de ${KINDS.find(k => k[0] === kind)[1].toLowerCase()}</button>`;
+  $('#page').onclick = e => {
+    const k = e.target.closest('[data-k]'); if (k) { ui.catKind = k.dataset.k; return pageCategorias(); }
+    const g = e.target.closest('[data-g]'); if (g) return groupSheet(st.groups.find(x => x.id === g.dataset.g));
+    const a = e.target.closest('[data-addi]'); if (a) return itemSheet(null, a.dataset.addi);
+    const i = e.target.closest('[data-i]'); if (i) return itemSheet(itemById(i.dataset.i));
+    if (e.target.id === 'addg') groupSheet(null, kind);
+  };
+}
+
+function groupSheet(g, kind) {
+  kind = g ? g.kind : kind;
+  let color = g ? g.color : COLORS[Math.floor(Math.random() * COLORS.length)];
+  openSheet('', panel => {
+    const used = g && S().items.some(i => i.groupId === g.id);
+    panel.innerHTML = `<h2>${g ? 'Editar grupo' : 'Novo grupo'}</h2><label for="g-name">Nome</label><input id="g-name" value="${esc(g ? g.name : '')}">
+      <label>Cor</label><div class="colors">${COLORS.map(c => `<button type="button" data-color="${c}" style="background:${c}" aria-pressed="${c === color}" aria-label="Cor"></button>`).join('')}</div>
+      <div class="actions">${g ? `<button class="btn danger" id="g-del" ${used ? 'disabled' : ''}>Excluir</button>` : ''}<button class="btn" id="g-cancel">Cancelar</button><button class="btn primary" id="g-save">Salvar</button></div>
+      ${used ? '<p class="hint">Para excluir o grupo, mova ou junte antes as categorias dele.</p>' : ''}`;
+    panel.querySelector('.colors').onclick = e => { const b = e.target.closest('[data-color]'); if (!b) return; color = b.dataset.color; panel.querySelectorAll('[data-color]').forEach(x => x.setAttribute('aria-pressed', x === b)); };
+    panel.querySelector('#g-cancel').onclick = closeSheet;
+    if (g) panel.querySelector('#g-del').onclick = async () => { if (!(await confirmBox(`Excluir o grupo ${g.name}?`))) return; await sync.commit(s => M.removeRecord(s, 'groups', g.id)); closeSheet(); };
+    panel.querySelector('#g-save').onclick = async () => {
+      const name = panel.querySelector('#g-name').value.trim(); if (!name) return toast('Dê um nome.', true);
+      await sync.commit(s => { if (g) { const x = s.groups.find(y => y.id === g.id); x.name = name; x.color = color; M.touch(x); } else s.groups.push(M.newGroup(kind, name, color)); });
+      closeSheet();
+    };
+  });
+}
+
+function itemSheet(it, groupId) {
+  const st = S(), g = it ? groupOf(it) : st.groups.find(x => x.id === groupId), kind = g.kind;
+  const uses = it ? st.tx.filter(t => t.itemId === it.id).length : 0;
+  openSheet('', panel => {
+    panel.innerHTML = `<h2>${it ? 'Editar categoria' : 'Nova categoria'}</h2>
+      <label for="i-name">Nome</label><input id="i-name" value="${esc(it ? it.name : '')}">
+      <label for="i-group">Grupo</label><select id="i-group">${st.groups.filter(x => x.kind === kind).map(x => `<option value="${x.id}" ${x.id === g.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+      ${it ? `<p class="hint">${uses} lançamento(s) usam esta categoria.</p>
+        <details class="merge"><summary>Juntar com outra categoria</summary><p class="hint">Os lançamentos passam para a categoria escolhida e esta é apagada. Útil para categorias repetidas.</p>
+        <select id="i-merge"><option value="">Escolha…</option>${optItems(kind, '').replace(`<option value="${it.id}" >`, `<option value="${it.id}" disabled>`)}</select>
+        <button class="btn block" id="i-domerge" style="margin-top:8px">Juntar</button></details>` : ''}
+      <div class="actions">${it ? `<button class="btn ${it.active === false ? '' : 'danger'}" id="i-off">${uses ? (it.active === false ? 'Reativar' : 'Arquivar') : 'Excluir'}</button>` : ''}<button class="btn" id="i-cancel">Cancelar</button><button class="btn primary" id="i-save">Salvar</button></div>
+      ${it && uses ? '<p class="hint">Arquivada, a categoria some das listas de escolha, mas os lançamentos antigos continuam com ela.</p>' : ''}`;
+    panel.querySelector('#i-cancel').onclick = closeSheet;
+    if (it) {
+      panel.querySelector('#i-off').onclick = async () => {
+        if (!uses) { if (!(await confirmBox(`Excluir a categoria ${it.name}?`))) return; await sync.commit(s => M.removeRecord(s, 'items', it.id)); return closeSheet(); }
+        await sync.commit(s => { const x = s.items.find(y => y.id === it.id); x.active = x.active === false; M.touch(x); }); closeSheet();
+      };
+      panel.querySelector('#i-domerge').onclick = async () => {
+        const to = panel.querySelector('#i-merge').value; if (!to || to === it.id) return toast('Escolha a categoria de destino.', true);
+        const dest = itemById(to);
+        if (!(await confirmBox(`Passar ${uses} lançamento(s) de "${it.name}" para "${dest.name}" e apagar "${it.name}"?`))) return;
+        let n = 0; await sync.commit(s => { n = M.mergeItems(s, it.id, to); }); closeSheet(); toast(`${n} lançamento(s) movidos para ${dest.name}.`);
+      };
+    }
+    panel.querySelector('#i-save').onclick = async () => {
+      const name = panel.querySelector('#i-name').value.trim(), gid = panel.querySelector('#i-group').value; if (!name) return toast('Dê um nome.', true);
+      await sync.commit(s => { if (it) { const x = s.items.find(y => y.id === it.id); x.name = name; x.groupId = gid; M.touch(x); } else s.items.push(M.newItem(gid, name)); });
+      closeSheet();
     };
   });
 }
@@ -456,6 +652,8 @@ function pageAjustes() {
     <div class="card"><h2>CPF para faturas com senha</h2>
       <p class="hint">${st.profile.cpf6 ? 'Cadastrado (6 primeiros dígitos).' : 'Não cadastrado. Faturas com senha vão pedir a senha toda vez.'}</p>
       <div class="row"><button class="btn" data-act="cpf">${st.profile.cpf6 ? 'Alterar' : 'Cadastrar'}</button>${st.profile.cpf6 ? '<button class="btn danger" data-act="cpfdel">Remover</button>' : ''}</div></div>
+    <div class="card"><h2>Categorias</h2><p class="hint">${st.items.filter(i => i.active !== false).length} categorias em ${st.groups.length} grupos.</p>
+      <button class="btn" data-act="cats">Gerenciar categorias</button></div>
     <div class="card"><h2>Backup</h2><p class="hint">Os dados já ficam no seu Drive. Este arquivo é uma cópia extra que você guarda onde quiser.</p>
       <div class="row"><button class="btn" data-act="export">Baixar backup</button><button class="btn" data-act="import">Importar backup</button></div>
       <input type="file" id="impfile" accept=".json,application/json" hidden></div>
@@ -468,6 +666,7 @@ function pageAjustes() {
     const a = b.dataset.act;
     if (a === 'sync') { if (!auth.isSignedIn()) return reconnect(); sync.sync(); }
     if (a === 'reconnect') reconnect();
+    if (a === 'cats') { ui.sub = 'cats'; render(); window.scrollTo(0, 0); }
     if (a === 'cpf') cpfSheet();
     if (a === 'cpfdel') { if (await confirmBox('Remover o CPF? Faturas com senha vão pedir a senha.')) { await sync.commit(s => { s.profile = { cpf6: '', upd: Date.now() }; }); render(); } }
     if (a === 'export') exportBackup();

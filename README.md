@@ -7,7 +7,7 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.1 (Fase 1 — núcleo).** Login com o Google, sincronização aparelho ↔ Drive, assistente de primeira configuração (contas, cartões, categorias, CPF para faturas com senha), lançamentos (despesa, cartão, receita, transferência), saldos e faturas, backup e importação do sistema antigo. Próximas fases: interface completa, leitura de fatura em PDF, segurança extra.
+**Versão atual: 0.2 (Fase 2a).** Login com o Google, sincronização aparelho ↔ Drive, assistente de primeira configuração, lançamentos (despesa, cartão, receita, transferência), compras parceladas no cartão, lançamentos repetidos todo mês (editar ou excluir só um ou "este e os seguintes"), busca, fatura de cada cartão (marcar como paga), resumo do mês por categoria e gráfico dos últimos 6 meses, categorias editáveis (criar, renomear, mover, juntar, arquivar), backup e importação do sistema antigo. Próximas fases: importação de faturas e extratos (PDF e CSV), orçamento, segurança extra.
 
 ---
 

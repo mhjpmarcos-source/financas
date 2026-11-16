@@ -111,7 +111,41 @@ input[type=checkbox]{width:22px; height:22px; min-height:0; accent-color:var(--b
   .tabs{top:0; bottom:auto; left:auto; right:24px; border:0; background:none; width:auto; padding-top:env(safe-area-inset-top)}
   .tabs button{height:56px; flex-direction:row; gap:6px; font-size:14px; padding:0 14px}
   .shell{padding-bottom:30px}
-  .top{padding-right:420px}
+  .top{padding-right:600px}
   .fab{bottom:28px}
 }
 .list.wrap small{white-space:normal}
+
+/* Fase 2a */
+.back{border:0; background:none; font-size:30px; line-height:1; padding:0 6px 4px 0; color:var(--brand); cursor:pointer}
+.search input{border-radius:12px; background:var(--card)}
+.tag.info{background:var(--brand-soft); color:var(--brand)}
+.kpis.two{grid-template-columns:1fr 1fr}
+.cat{border-top:1px solid var(--line); padding:4px 0}
+.cat:first-of-type{border-top:0}
+.cat summary{display:flex; align-items:center; gap:10px; padding:10px 0; cursor:pointer; list-style:none; font-weight:600}
+.cat summary::-webkit-details-marker{display:none}
+.sw{width:12px; height:12px; border-radius:4px; flex:none; display:inline-block}
+.bar{height:6px; background:var(--bg); border-radius:3px; overflow:hidden; margin:0 0 6px}
+.bar i{display:block; height:100%; border-radius:3px}
+.sublist{list-style:none; margin:4px 0 8px; padding:0 0 0 22px}
+.sublist li{display:flex; gap:8px; padding:5px 0; font-size:14px}
+.chart{width:100%; height:auto; display:block}
+.chart .b-rec{fill:var(--pos)} .chart .b-desp{fill:var(--neg)}
+.chart .ax{font-size:10px; fill:var(--muted)} .chart .ax.cur{font-weight:700; fill:var(--ink)}
+.legend{font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center}
+.legend .sw.b-rec{background:var(--pos)} .legend .sw.b-desp{background:var(--neg); margin-left:10px}
+.ghead{display:flex; align-items:center; gap:10px; padding:4px 0 8px; cursor:pointer; border-bottom:1px solid var(--line)}
+.off{color:var(--muted); text-decoration:line-through}
+.colors{display:flex; flex-wrap:wrap; gap:8px}
+.colors button{width:34px; height:34px; border-radius:50%; border:3px solid transparent; cursor:pointer}
+.colors button[aria-pressed="true"]{border-color:var(--ink)}
+.merge{margin:10px 0; border:1px solid var(--line); border-radius:12px; padding:8px 12px}
+.merge summary{font-weight:600; cursor:pointer}
+.sheet.ask{z-index:40}
+.seg button:disabled{opacity:.35}
+@media (min-width:900px){
+  .cols{display:grid; grid-template-columns:1fr 1fr; gap:0 16px; align-items:start}
+  .sheet{align-items:center}
+  .sheet .panel{border-radius:18px; max-height:86vh}
+}

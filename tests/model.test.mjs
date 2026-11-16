@@ -35,3 +35,24 @@ const imp=M.importLegacy(legacy); assert.equal(imp.tx.length,2); assert(imp.conf
 assert.throws(()=>M.importLegacy({foo:1}));
 const self=M.importLegacy(m1); assert.equal(self.tx.length,2);
 console.log('model tests OK');
+// ---- Fase 2a
+{
+  const s=M.emptyState(); s.config.setupDone=true; const pl=M.defaultPlan(); s.groups=pl.groups; s.items=pl.items;
+  const ca=M.newAccount({nature:'debito',name:'C'}), cc=M.newAccount({nature:'credito',name:'K',closeDay:27,dueDay:6,payAccount:ca.id}); s.accounts.push(ca,cc);
+  assert.deepEqual(M.splitAmount(100,3),[33.34,33.33,33.33]);
+  const par=M.makeSeries({type:'cred',date:'2026-11-28',accountId:cc.id,itemId:s.items[5].id,amount:100,desc:'TV'},3,C.cardCycle(cc,'2026-11-28').comp);
+  assert.deepEqual(par.map(t=>t.comp),['2027-01','2027-02','2027-03']); assert(par.every(t=>t.date==='2026-11-28'&&t.seriesN===3));
+  s.tx.push(...par);
+  const rep=M.makeSeries({type:'deb',date:'2026-01-31',accountId:ca.id,itemId:s.items[6].id,amount:50},4);
+  assert.deepEqual(rep.map(t=>t.date),['2026-01-31','2026-02-28','2026-03-31','2026-04-30']);
+  s.tx.push(...rep);
+  assert.equal(M.editSeriesFrom(s,rep[1],{amount:60,date:'2026-02-10'}),3);
+  assert.deepEqual(M.seriesMembers(s,rep[0]).map(t=>t.date+':'+t.amount),['2026-01-31:50','2026-02-10:60','2026-03-10:60','2026-04-10:60']);
+  assert.equal(M.removeSeriesFrom(s,par[1]),2); assert.equal(s.tx.filter(t=>t.seriesId===par[0].seriesId).length,1);
+  const f=C.faturaOf(s,cc.id,'2027-01'); assert.equal(f.total,33.34); assert.equal(f.list.length,1);
+  const cat=C.byCategory(s,'2026-02'); assert.equal(cat[0].total,60);
+  const it2=M.newItem(s.groups[2].id,'Nova'); s.items.push(it2); assert.equal(M.mergeItems(s,s.items[6].id,it2.id),4); assert(!s.items.find(i=>i.id===rep[0].itemId)||rep[0].itemId===it2.id);
+  assert.equal(C.search(s,'tv').length,1); assert.equal(C.search(s,'60,00').length,3);
+  assert.equal(C.monthSeries(s,'2026-04',4).map(x=>x.desp).join(),'50,60,60,60');
+  console.log('fase 2a model tests OK');
+}
