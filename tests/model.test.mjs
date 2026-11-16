@@ -56,3 +56,51 @@ console.log('model tests OK');
   assert.equal(C.monthSeries(s,'2026-04',4).map(x=>x.desp).join(),'50,60,60,60');
   console.log('fase 2a model tests OK');
 }
+// ---- dívidas e pendências
+{
+  const s = M.emptyState(); s.config.setupDone = true; const pl = M.defaultPlan(); s.groups = pl.groups; s.items = pl.items;
+  const ca = M.newAccount({ nature: 'debito', name: 'C' }); s.accounts.push(ca);
+  const rec = s.items.find(i => i.name === 'Recebimento de empréstimo concedido'); assert(rec, 'categoria nova no plano');
+  const lent = s.items.find(i => i.name === 'Empréstimos concedidos');
+  const { loan, txs } = M.makeLoan({ dir: 'in', person: 'Pessoa Fictícia', desc: 'Empréstimo', total: 1000, n: 3, firstDue: '2026-01-31', accountId: ca.id, itemId: rec.id, startDate: '2026-01-05', startItemId: lent.id });
+  s.loans.push(loan); s.tx.push(...txs);
+  assert.equal(txs.length, 4); assert.deepEqual(txs.filter(t => !t.loanStart).map(t => t.date + ':' + t.amount), ['2026-01-31:333.34', '2026-02-28:333.33', '2026-03-31:333.33']);
+  assert(txs.filter(t => !t.loanStart).every(t => t.status === 'pend' && t.type === 'rec'));
+  let ls = M.loanStatus(s, loan); assert.equal(ls.rest, 1000); assert.equal(ls.openN, 3);
+  s.tx.find(t => t.date === '2026-01-31').status = 'liq'; ls = M.loanStatus(s, loan); assert.equal(ls.paid, 333.34); assert.equal(ls.next.date, '2026-02-28');
+  assert.equal(C.pendings(s).length, 2);
+  // saldo: saiu 1000 em 05/01, voltou 333,34 em 31/01
+  assert.equal(C.balances(s, '2026-02-01', true)[ca.id], -666.66);
+  M.removeLoan(s, loan.id); assert.equal(s.tx.length, 2); assert.equal(s.loans.length, 0);
+  // migração: quem já usa ganha a categoria nova
+  const old = M.emptyState(); old.config.setupDone = true; old.config.planV = 2; const op = M.defaultPlan(); old.groups = op.groups; old.items = op.items.filter(i => i.name !== 'Recebimento de empréstimo concedido');
+  M.migrate(old); assert.equal(old.items.filter(i => i.name === 'Recebimento de empréstimo concedido').length, 1);
+  // merge com loans
+  const a = M.clone(s), b = M.clone(s); b.loans.push({ ...loan, id: 'lx', upd: Date.now() }); assert.equal(M.merge(a, b).loans.length, 1);
+  console.log('dívidas tests OK');
+}
+// ---- pagamento de fatura (integral e parcial) e saldo inicial com data
+{
+  const s = M.emptyState(); s.config.setupDone = true; const pl = M.defaultPlan(); s.groups = pl.groups; s.items = pl.items;
+  const ca = M.newAccount({ nature: 'debito', name: 'C', initial: 1000, initialDate: '2026-01-31' });
+  const cc = M.newAccount({ nature: 'credito', name: 'K', closeDay: 25, dueDay: 5, payAccount: ca.id }); s.accounts.push(ca, cc);
+  s.tx.push(M.newTx({ type: 'deb', date: '2026-01-20', accountId: ca.id, itemId: s.items[20].id, amount: 50 })); // antes da data do saldo inicial: não conta
+  s.tx.push(M.newTx({ type: 'cred', date: '2026-01-10', accountId: cc.id, itemId: s.items[20].id, amount: 300 })); // fatura 2026-02, vence 05/02
+  const key = cc.id + '|2026-02';
+  let f = C.faturas(s).find(x => x.key === key); assert.equal(f.status, 'pend'); assert.equal(f.rest, 300);
+  assert.equal(C.balances(s, '2026-02-10', true)[ca.id], 1000, 'compra no cartão não tira da conta antes de pagar');
+  assert.equal(C.balances(s, '2026-02-10', false)[ca.id], 700, 'previsão desconta a fatura');
+  const p1 = M.newTx({ type: 'deb', date: '2026-02-05', accountId: ca.id, amount: 100, desc: 'Pagamento de fatura' }); Object.assign(p1, { cardPay: true, faturaKey: key, itemId: '' }); s.tx.push(p1);
+  f = C.faturas(s).find(x => x.key === key); assert.equal(f.status, 'parc'); assert.equal(f.paid, 100); assert.equal(f.rest, 200);
+  assert.equal(C.balances(s, '2026-02-10', true)[ca.id], 900);
+  assert.equal(C.monthSummary(s, '2026-02').desp, 300, 'pagamento de fatura não é despesa; a compra é');
+  assert.equal(C.pendings(s).find(p => p.kind === 'fatura').amount, 200);
+  assert.equal(C.faturaCandidates(s, { accountId: ca.id, date: '2026-02-20', amount: 200 })[0].exact, true);
+  const p2 = M.newTx({ type: 'deb', date: '2026-02-20', accountId: ca.id, amount: 200 }); Object.assign(p2, { cardPay: true, faturaKey: key, itemId: '' }); s.tx.push(p2);
+  f = C.faturas(s).find(x => x.key === key); assert.equal(f.status, 'liq'); assert.equal(C.balances(s, '2026-03-01', true)[ca.id], 700);
+  // fatura paga antes do app: marcada à mão e com vencimento antes da data do saldo inicial → não mexe no saldo
+  s.tx.push(M.newTx({ type: 'cred', date: '2025-12-10', accountId: cc.id, itemId: s.items[20].id, amount: 999 }));
+  s.faturaMeta[cc.id + '|2026-01'] = { status: 'liq', upd: 1 };
+  assert.equal(C.balances(s, '2026-03-01', true)[ca.id], 700);
+  console.log('pagamento de fatura tests OK');
+}

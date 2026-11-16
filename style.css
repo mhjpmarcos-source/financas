@@ -171,3 +171,13 @@ input[type=checkbox]{width:22px; height:22px; min-height:0; accent-color:var(--b
 .actions.sticky{position:sticky; bottom:calc(-16px - env(safe-area-inset-bottom)); background:var(--card); padding:12px 0; margin-bottom:-4px; border-top:1px solid var(--line)}
 .kpi b{font-size:clamp(12px, 3.7vw, 15px); white-space:nowrap}
 .kpi{min-width:0; overflow:hidden}
+
+/* Agenda e dívidas */
+.okbtn{border:1px solid var(--brand); color:var(--brand); background:transparent; border-radius:10px; padding:8px 10px; font-weight:700; font-size:13px; cursor:pointer; flex:none; min-height:38px}
+.card.late h2{color:var(--neg)}
+.list .t .bar{display:block; margin:6px 0 0}
+.tabs button span{white-space:nowrap}
+@media (max-width:380px){ .tabs button{font-size:11px} .tabs button svg{width:22px; height:22px} }
+@media (min-width:900px){ .top{padding-right:720px} }
+.list.full .t b, .list.full .t small, .list.wrap .t b{white-space:normal}
+.actions.wrap{flex-wrap:wrap} .actions.wrap .btn{flex:1 1 40%} h3.sub{font-size:14px; color:var(--muted); margin:14px 0 0}

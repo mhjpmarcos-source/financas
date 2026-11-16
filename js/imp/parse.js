@@ -243,7 +243,7 @@ function buildExtrato(rows, anchors, printed, bank) {
     const detail = [above.get(a) ? a.text : '', ...(below.get(a) || [])].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     const baseDate = a.y ? `${a.y}-${pad(a.m)}-${pad(a.d)}` : null;
     const T = norm(title + ' ' + detail);
-    if (/SALDO ANTERIOR/.test(norm(title))) { out.saldoIni = a.money.sign === '-' ? -a.money.v : a.money.v; return; }
+    if (/SALDO ANTERIOR/.test(norm(title))) { out.saldoIni = a.money.sign === '-' ? -a.money.v : a.money.v; out.saldoIniDate = baseDate; return; }
     if (/^S\s?A\s?L\s?D\s?O$|SALDO FINAL|SALDO DO DIA|SALDO EM /.test(norm(title))) { out.saldoFim = a.money.sign === '-' ? -a.money.v : a.money.v; return; }
     const d = describe(title, detail, baseDate);
     out.lines.push({ date: d.date, bookDate: baseDate, desc: d.desc, title, detail, amount: a.money.v, dir: a.money.sign === '-' ? 'out' : 'in', doc: a.doc, parc: null,
@@ -332,7 +332,7 @@ export function parseCsv(bytes) {
     if (/ENTRADA|CREDITO|^C$/.test(tp) && v < 0) v = -v;
     const title = (r[c.title] || '').trim(), detail = c.detail >= 0 ? (r[c.detail] || '').trim() : '';
     const T = norm(title);
-    if (/SALDO ANTERIOR/.test(T)) { out.saldoIni = v; return; }
+    if (/SALDO ANTERIOR/.test(T)) { out.saldoIni = v; out.saldoIniDate = date; return; }
     if (/^S\s?A\s?L\s?D\s?O$|SALDO FINAL|SALDO DO DIA|SALDO EM /.test(T)) { out.saldoFim = v; return; }
     const d = describe(title, detail, date);
     out.lines.push({ date: d.date, bookDate: date, desc: d.desc, title, detail, amount: Math.abs(v), sign: v < 0 ? -1 : 1, dir: v < 0 ? 'out' : 'in', doc: c.doc >= 0 ? (r[c.doc] || '').trim() : '', parc: null, ...classifyRole(T + ' ' + norm(detail)) });

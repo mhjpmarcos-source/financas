@@ -7,7 +7,7 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.3 (Fase 3 — importação).** Além de lançamentos, parcelas, repetições, faturas, resumo e categorias editáveis, o app **importa faturas de cartão e extratos de conta** em **PDF, CSV ou OFX**:
+**Versão atual: 0.4.1.** Pagamento de fatura de cartão é um tipo próprio de lançamento: sai da conta, não conta como despesa e se vincula à fatura (valor idêntico quita; valor menor fica como pagamento parcial, mostrando quanto falta). Saldo inicial das contas tem data; ao importar um extrato, o saldo anterior dele pode virar o saldo inicial. Lançamentos, parcelas, repetições, faturas, resumo, categorias editáveis, **Agenda** (o que vence e o que está atrasado, com botão de recebido/pago), **dívidas com terceiros** (quem me deve e a quem devo, parceladas, com vencimentos e saldo em aberto) e **importação**. O app **importa faturas de cartão e extratos de conta** em **PDF, CSV ou OFX**:
 - O arquivo é lido no próprio aparelho; nada é enviado a servidor.
 - PDF com senha: o app tenta os 4, 5 e 6 primeiros dígitos do CPF cadastrado; se não abrir, pede a senha, que não é guardada.
 - Reconhece compras, parcelas ("PARC 06/12", "- 7/8"), estornos, encargos, cartões adicionais e virtuais; no extrato, Pix, boletos, compras no débito (com a data real da compra), tarifas e juros.
@@ -71,6 +71,7 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `app.js` — telas.
   - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.
+- Testes de navegador também para a Agenda e as dívidas: `e2e/agenda.e2e.mjs`.
 - Testes (pasta `tests`): `npm install && python3 fixtures/gerar.py && npm test`. Os documentos de teste são **fictícios** e gerados pelo `gerar.py`. Testes de navegador: `e2e/basico.e2e.mjs` e `e2e/importacao.e2e.mjs` (precisam do Playwright e de um servidor local na raiz do app; instruções no topo de cada arquivo).
 - Leitor de PDF: `vendor/pdfjs` (pdf.js da Mozilla, licença Apache-2.0), carregado só na hora de importar.
 - Nunca coloque faturas, extratos, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`, `*.csv`, `*.ofx` e planilhas).

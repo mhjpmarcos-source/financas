@@ -27,12 +27,18 @@ export function buildPlan(S, st, { accountId, comp }) {
     seen[base] = (seen[base] || 0) + 1;
     const impKey = hash(base + '#' + seen[base]);
     row.tx = { type, date: l.date, accountId, amount: signed, desc: l.desc + (l.parc ? ` (${l.parc.i}/${l.parc.n})` : ''), rawDesc: l.title && l.title !== l.desc ? (l.title + ' ' + (l.detail || '')).trim() : '', impKey, comp: isCard ? comp : undefined, doc: l.doc || undefined, cardRef: l.cardRef || undefined };
+    if (existingKeys.has(impKey)) { row.status = 'already'; row.reason = 'Já importado antes'; return row; }
     if (l.role === 'cardpay') {
-      row.status = 'cardpay'; row.reason = 'Pagamento de fatura: não é despesa nova (a compra já está no cartão).';
-      row.fatura = findFaturaPaid(S, accountId, l);
+      // o dinheiro saiu da conta, mas não é despesa nova (as compras estão no cartão): vira "pagamento de fatura"
+      row.status = 'cardpay'; row.reason = 'Pagamento de fatura: tira o dinheiro da conta, mas não conta como despesa (as compras já estão no cartão).';
+      row.options = C.faturaCandidates(S, { accountId, date: l.date, amount: l.amount });
+      const best = row.options[0];
+      row.fatura = best && (best.exact || best.dist <= 15) ? best : null; // idêntico: vincula; senão, a mais próxima (o usuário pode trocar)
+      row.include = true;
+      row.tx.cardPay = true; row.tx.faturaKey = row.fatura ? row.fatura.key : '';
+      row.tx.desc = 'Pagamento de fatura · ' + (l.detail || l.desc).replace(/^Pagto cart[aã]o cr[eé]dito\s*·?\s*/i, '');
       return row;
     }
-    if (existingKeys.has(impKey)) { row.status = 'already'; row.reason = 'Já importado antes'; return row; }
     const dup = findManual(S, row.tx, used, isCard);
     if (dup) { used.add(dup.id); row.status = 'dup'; row.match = dup; row.reason = 'Parece já lançado'; return row; }
     const c = classify({ ...l, kindHint: isCard && l.dir === 'in' ? 'estorno' : '' });
@@ -65,41 +71,37 @@ function findManual(S, t, used, isCard) {
   return best ? best.x : null;
 }
 
-/* pagamento de fatura no extrato → fatura do cartão pago por esta conta com vencimento próximo */
-function findFaturaPaid(S, accountId, l) {
-  const cards = S.accounts.filter(a => a.nature === 'credito' && a.payAccount === accountId);
-  let best = null;
-  C.faturas(S).filter(f => cards.some(c => c.id === f.cardId)).forEach(f => {
-    const dd = days(f.date, l.date);
-    if (dd > 12) return;
-    const diff = Math.abs(f.total - l.amount);
-    const score = dd + (diff < 0.01 ? 0 : 20);
-    if (!best || score < best.score) best = { f, score, exact: diff < 0.01 };
-  });
-  return best ? { key: best.f.key, cardId: best.f.cardId, comp: best.f.comp, total: best.f.total, exact: best.exact } : null;
-}
-
 /* aplica no estado: cria lançamentos, aprende categorias, marca faturas pagas. Devolve contagem. */
 export function applyPlan(S, plan, { markPaid = true } = {}) {
   let created = 0, learned = 0, paid = 0;
   if (!S.rules) S.rules = {};
   plan.rows.forEach(r => {
-    if (r.status === 'cardpay' && markPaid && r.include && r.fatura) {
-      S.faturaMeta[r.fatura.key] = Object.assign({}, S.faturaMeta[r.fatura.key], { status: 'liq', date: r.line.date, upd: Date.now() });
-      paid++;
-      return;
-    }
+    if (r.status === 'cardpay' && r.include) { r.tx.faturaKey = r.fatura ? r.fatura.key : ''; if (r.fatura) paid++; }
     if (!r.include || !r.tx) return;
     const t = M.newTx({ ...r.tx, itemId: r.itemId, status: r.tx.type === 'cred' ? 'pend' : 'liq', origin: 'import', signed: true });
-    ['impKey', 'rawDesc', 'doc', 'cardRef'].forEach(k => { if (r.tx[k]) t[k] = r.tx[k]; });
+    ['impKey', 'rawDesc', 'doc', 'cardRef', 'cardPay', 'faturaKey'].forEach(k => { if (r.tx[k]) t[k] = r.tx[k]; });
+    if (t.cardPay) t.itemId = '';
     S.tx.push(t); created++;
     if (r.itemId && r.key && r.how !== 'regra' && r.how !== 'histórico') {
       const dir = r.tx.type === 'rec' ? 'in' : 'out';
       S.rules[dir + ':' + r.key] = { itemId: r.itemId, upd: Date.now() }; learned++;
     }
   });
+  // fatura importada que já foi paga (antes de começar a usar o app, ou paga por fora)
+  if (plan.isCard && plan.alreadyPaid && plan.comp) {
+    const key = plan.accountId + '|' + plan.comp;
+    S.faturaMeta[key] = Object.assign({}, S.faturaMeta[key], { status: 'liq', upd: Date.now() }); paid++;
+  }
+  // saldo do extrato como saldo inicial da conta
+  if (!plan.isCard && plan.setInitial) {
+    const a = S.accounts.find(x => x.id === plan.accountId);
+    if (a) { a.initial = plan.setInitial.value; a.initialDate = plan.setInitial.date; M.touch(a); }
+  }
   return { created, learned, paid };
 }
+
+/* vincula um pagamento (linha da revisão) a outra fatura ou a nenhuma */
+export function setRowFatura(row, key) { row.fatura = (row.options || []).find(f => f.key === key) || null; }
 
 /* quando o usuário troca a categoria de uma linha, a regra vale para as outras do mesmo estabelecimento */
 export function propagate(plan, row, itemId) {

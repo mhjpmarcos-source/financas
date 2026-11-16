@@ -31,10 +31,12 @@ assert.equal(await p.textContent('.month b'), 'Março de 2026');
 const [fc2] = await Promise.all([p.waitForEvent('filechooser'), p.click('#imp')]);
 await fc2.setFiles(FX + 'extrato-ficticio.csv'); await p.waitForSelector('#r-go');
 await p.click('#r-filter [data-f=ignored]'); await p.screenshot({ path: process.env.SHOTS ? process.env.SHOTS + '/imp-extrato.png' : '/tmp/imp-extrato.png' });
-await p.locator('li.irow.cardpay input[type=checkbox]').check();
+assert.match(await p.textContent('li.irow.cardpay'), /idêntico/);
 await p.click('#r-go'); await wait(1500);
-d = drive.current(); assert.equal(Object.values(d.faturaMeta).filter(m => m.status === 'liq').length, 1, 'fatura paga');
-assert.equal(d.tx.filter(t => t.origin === 'import').length, 9);
+d = drive.current(); assert.equal(d.tx.filter(t => t.cardPay && t.faturaKey).length, 1, 'pagamento vinculado à fatura');
+assert.equal(d.tx.filter(t => t.origin === 'import').length, 10);
+const fst = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); return c.faturas(s).map(f => f.status); });
+assert.deepEqual(fst, ['liq'], 'fatura paga pelo pagamento do extrato');
 // importar o mesmo extrato de novo: nada novo
 const [fc3] = await Promise.all([p.waitForEvent('filechooser'), p.click('#imp')]);
 await fc3.setFiles(FX + 'extrato-ficticio.csv'); await p.waitForSelector('#r-go');

@@ -5,7 +5,7 @@
 
 export const APP = 'financas';
 export const FORMAT = 3;
-export const COLLS = ['accounts', 'groups', 'items', 'tx'];
+export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans'];
 const TOMBSTONE_DAYS = 180;
 
 export const uid = p => (p || 'x') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -16,7 +16,7 @@ export const todayISO = () => { const d = new Date(); return d.getFullYear() + '
 /* ---------- plano de contas padrão (neutro, sem nomes de pessoas) ---------- */
 const PLAN = [
   ['receita', 'Receitas', '#2e9e6b', ['Salário', '13º salário', 'Férias', 'Honorários / Serviços', 'Pró-labore', 'Rendimentos de aplicações', 'Reembolsos recebidos', 'Outras receitas']],
-  ['receita', 'Receitas extraordinárias', '#7cbf3a', ['Venda de bens', 'Presentes recebidos', 'Empréstimos recebidos', 'Restituição de IR']],
+  ['receita', 'Receitas extraordinárias', '#7cbf3a', ['Venda de bens', 'Presentes recebidos', 'Empréstimos recebidos', 'Recebimento de empréstimo concedido', 'Restituição de IR']],
   ['despesa', 'Moradia', '#e0574f', ['Aluguel / Financiamento', 'Condomínio', 'Energia', 'Água / Esgoto', 'Gás', 'Internet / TV / Telefone', 'Manutenção da casa', 'Serviços domésticos']],
   ['despesa', 'Alimentação', '#ec7a6a', ['Mercado', 'Padaria', 'Restaurantes / Delivery', 'Lanches / Café']],
   ['despesa', 'Transporte', '#e98b3a', ['Combustível', 'Aplicativos de transporte', 'Estacionamento / Pedágio', 'Transporte público', 'Manutenção do veículo', 'Seguro do veículo']],
@@ -48,7 +48,7 @@ export function emptyState() {
     app: APP, format: FORMAT, createdAt: new Date().toISOString(), updatedAt: 0,
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
-    accounts: [], groups: [], items: [], tx: [],
+    accounts: [], groups: [], items: [], tx: [], loans: [],
     faturaMeta: {}, rules: {}, deleted: {}
   };
 }
@@ -59,7 +59,8 @@ export function newAccount(f) {
   return {
     id: uid('a'), nature: credit ? 'credito' : 'debito', name: String(f.name || '').trim(),
     initial: credit ? 0 : (+f.initial || 0), closeDay: credit ? (+f.closeDay || 0) : 0, dueDay: credit ? (+f.dueDay || 0) : 0,
-    payAccount: credit ? (f.payAccount || '') : '', active: true, upd: Date.now()
+    payAccount: credit ? (f.payAccount || '') : '', active: true, upd: Date.now(),
+    initialDate: credit ? undefined : (f.initialDate || undefined)
   };
 }
 
@@ -108,7 +109,10 @@ export function migrate(s) {
 
 /* categorias novas do plano padrão, acrescentadas a quem já usa o app (id fixo: dois aparelhos não duplicam;
    upd 0: se o usuário apagar, a exclusão prevalece) */
-const PLAN_UPDATES = [{ v: 2, group: 'Alimentação', kind: 'despesa', item: 'Padaria', id: 'i_pl2_padaria' }];
+const PLAN_UPDATES = [
+  { v: 2, group: 'Alimentação', kind: 'despesa', item: 'Padaria', id: 'i_pl2_padaria' },
+  { v: 3, group: 'Receitas extraordinárias', kind: 'receita', item: 'Recebimento de empréstimo concedido', id: 'i_pl3_receb_emprest' }
+];
 function addPlanUpdates(s) {
   if (!s.config.setupDone) return;
   const cur = +s.config.planV || 1;
@@ -239,3 +243,42 @@ export function removeSeriesFrom(state, t) {
   return ids.length;
 }
 function monthsBetween(d1, d2) { const [y1, m1] = d1.split('-').map(Number), [y2, m2] = d2.split('-').map(Number); return (y2 * 12 + m2) - (y1 * 12 + m1); }
+
+/* ---------- dívidas com terceiros ----------
+   dir 'in' = alguém me deve (a receber); 'out' = eu devo (a pagar).
+   As parcelas são lançamentos pendentes (receita ou despesa) ligados ao empréstimo por loanId. */
+export function makeLoan(f) {
+  const t = Date.now();
+  const loan = {
+    id: uid('l'), dir: f.dir, person: String(f.person || '').trim(), desc: String(f.desc || '').trim(),
+    total: Math.round(Math.abs(+f.total || 0) * 100) / 100, n: Math.max(1, Math.min(240, +f.n || 1)),
+    firstDue: f.firstDue, accountId: f.accountId, itemId: f.itemId || '', created: t, upd: t
+  };
+  const label = [loan.desc || (loan.dir === 'in' ? 'Empréstimo concedido' : 'Dívida'), loan.person].filter(Boolean).join(' · ');
+  const base = { type: loan.dir === 'in' ? 'rec' : 'deb', date: loan.firstDue, accountId: loan.accountId, itemId: loan.itemId, desc: label, status: 'pend' };
+  const parcels = loan.n > 1
+    ? makeSeries({ ...base, amount: loan.total }, loan.n).map((x, i, all) => Object.assign(x, { amount: splitAmount(loan.total, loan.n)[i], status: 'pend', seriesKind: 'parc' }))
+    : [newTx({ ...base, amount: loan.total })];
+  parcels.forEach(p => { p.loanId = loan.id; });
+  const txs = [...parcels];
+  // opcional: o movimento do dinheiro emprestado (saída quando eu empresto; entrada quando eu pego emprestado)
+  if (f.startDate && f.startItemId) {
+    const st = newTx({ type: loan.dir === 'in' ? 'deb' : 'rec', date: f.startDate, accountId: loan.accountId, itemId: f.startItemId, amount: loan.total, desc: label, status: 'liq' });
+    st.loanId = loan.id; st.loanStart = true; loan.startTx = st.id; txs.push(st);
+  }
+  return { loan, txs };
+}
+
+export function loanStatus(state, loan) {
+  const parcels = state.tx.filter(t => t.loanId === loan.id && !t.loanStart).sort((a, b) => a.date.localeCompare(b.date));
+  const done = parcels.filter(t => t.status === 'liq'), open = parcels.filter(t => t.status !== 'liq');
+  const paid = Math.round(done.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  const total = Math.round(parcels.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+  return { parcels, paid, total, rest: Math.round((total - paid) * 100) / 100, next: open[0] || null, openN: open.length, doneN: done.length, late: open.filter(t => t.date < todayISO()).length };
+}
+
+/* apaga o empréstimo e as parcelas ainda não pagas (as pagas continuam como lançamentos) */
+export function removeLoan(state, loanId) {
+  state.tx.filter(t => t.loanId === loanId && t.status !== 'liq' && !t.loanStart).forEach(t => removeRecord(state, 'tx', t.id));
+  removeRecord(state, 'loans', loanId);
+}
