@@ -5,3 +5,7 @@ dados/
 *.json.bak
 .DS_Store
 node_modules/
+*.csv
+*.ofx
+*.xls
+*.xlsx

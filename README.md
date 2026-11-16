@@ -7,7 +7,17 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.2 (Fase 2a).** Login com o Google, sincronização aparelho ↔ Drive, assistente de primeira configuração, lançamentos (despesa, cartão, receita, transferência), compras parceladas no cartão, lançamentos repetidos todo mês (editar ou excluir só um ou "este e os seguintes"), busca, fatura de cada cartão (marcar como paga), resumo do mês por categoria e gráfico dos últimos 6 meses, categorias editáveis (criar, renomear, mover, juntar, arquivar), backup e importação do sistema antigo. Próximas fases: importação de faturas e extratos (PDF e CSV), orçamento, segurança extra.
+**Versão atual: 0.3 (Fase 3 — importação).** Além de lançamentos, parcelas, repetições, faturas, resumo e categorias editáveis, o app **importa faturas de cartão e extratos de conta** em **PDF, CSV ou OFX**:
+- O arquivo é lido no próprio aparelho; nada é enviado a servidor.
+- PDF com senha: o app tenta os 4, 5 e 6 primeiros dígitos do CPF cadastrado; se não abrir, pede a senha, que não é guardada.
+- Reconhece compras, parcelas ("PARC 06/12", "- 7/8"), estornos, encargos, cartões adicionais e virtuais; no extrato, Pix, boletos, compras no débito (com a data real da compra), tarifas e juros.
+- Ignora linhas de saldo, aplicações e resgates automáticos e lançamentos futuros; pagamento de fatura no extrato marca a fatura do cartão como paga.
+- Confere a soma lida com o total impresso na fatura, ou o saldo inicial + movimentação com o saldo final do extrato.
+- Sugere a categoria (dicionário de estabelecimentos + o que você já classificou) e aprende com as suas escolhas.
+- Detecta duplicatas: o que você já lançou à mão (mesmo valor, data próxima) e o que já foi importado antes (não importa duas vezes).
+- Tela de revisão antes de gravar.
+
+Testado com faturas e extratos do Banco do Brasil e do Sam's Club; o leitor é genérico e deve funcionar com a maioria dos bancos. Se algum arquivo não for lido direito, guarde-o (sem compartilhar publicamente) para ajustar o leitor.
 
 ---
 
@@ -59,6 +69,8 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `store.js` — cópia no aparelho (IndexedDB).
   - `sync.js` — sincronização aparelho ↔ Drive.
   - `app.js` — telas.
+  - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.
-- Teste do modelo: `cd tests && node model.test.mjs`.
-- Nunca coloque faturas, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`).
+- Testes (pasta `tests`): `npm install && python3 fixtures/gerar.py && npm test`. Os documentos de teste são **fictícios** e gerados pelo `gerar.py`. Testes de navegador: `e2e/basico.e2e.mjs` e `e2e/importacao.e2e.mjs` (precisam do Playwright e de um servidor local na raiz do app; instruções no topo de cada arquivo).
+- Leitor de PDF: `vendor/pdfjs` (pdf.js da Mozilla, licença Apache-2.0), carregado só na hora de importar.
+- Nunca coloque faturas, extratos, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`, `*.csv`, `*.ofx` e planilhas).

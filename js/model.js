@@ -18,7 +18,7 @@ const PLAN = [
   ['receita', 'Receitas', '#2e9e6b', ['Salário', '13º salário', 'Férias', 'Honorários / Serviços', 'Pró-labore', 'Rendimentos de aplicações', 'Reembolsos recebidos', 'Outras receitas']],
   ['receita', 'Receitas extraordinárias', '#7cbf3a', ['Venda de bens', 'Presentes recebidos', 'Empréstimos recebidos', 'Restituição de IR']],
   ['despesa', 'Moradia', '#e0574f', ['Aluguel / Financiamento', 'Condomínio', 'Energia', 'Água / Esgoto', 'Gás', 'Internet / TV / Telefone', 'Manutenção da casa', 'Serviços domésticos']],
-  ['despesa', 'Alimentação', '#ec7a6a', ['Mercado', 'Restaurantes / Delivery', 'Lanches / Café']],
+  ['despesa', 'Alimentação', '#ec7a6a', ['Mercado', 'Padaria', 'Restaurantes / Delivery', 'Lanches / Café']],
   ['despesa', 'Transporte', '#e98b3a', ['Combustível', 'Aplicativos de transporte', 'Estacionamento / Pedágio', 'Transporte público', 'Manutenção do veículo', 'Seguro do veículo']],
   ['despesa', 'Saúde', '#d9534f', ['Plano de saúde', 'Farmácia', 'Consultas e exames', 'Academia']],
   ['despesa', 'Educação', '#c26b9e', ['Escola / Faculdade', 'Cursos / Livros', 'Material escolar']],
@@ -49,7 +49,7 @@ export function emptyState() {
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
     accounts: [], groups: [], items: [], tx: [],
-    faturaMeta: {}, deleted: {}
+    faturaMeta: {}, rules: {}, deleted: {}
   };
 }
 
@@ -68,7 +68,7 @@ export function newTx(f) {
   const t = Date.now();
   const tx = {
     id: uid('t'), type: f.type, date: f.date, accountId: f.accountId, itemId: f.type === 'trf' ? '' : (f.itemId || ''),
-    amount: Math.round(Math.abs(+f.amount || 0) * 100) / 100, desc: String(f.desc || '').trim(),
+    amount: Math.round((f.signed ? +f.amount || 0 : Math.abs(+f.amount || 0)) * 100) / 100, desc: String(f.desc || '').trim(),
     status: f.status || (f.type === 'cred' ? 'pend' : 'liq'), upd: t, created: t, origin: f.origin || 'manual'
   };
   if (f.type === 'trf') tx.toAccountId = f.toAccountId;
@@ -99,9 +99,26 @@ export function migrate(s) {
   COLLS.forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
   if (!s.faturaMeta || typeof s.faturaMeta !== 'object') s.faturaMeta = {};
   if (!s.deleted || typeof s.deleted !== 'object') s.deleted = {};
+  if (!s.rules || typeof s.rules !== 'object') s.rules = {};
+  addPlanUpdates(s);
   COLLS.forEach(k => s[k].forEach(r => { if (!r.id) r.id = uid(k[0]); if (typeof r.upd !== 'number') r.upd = 0; }));
   s.profile.cpf6 = /^\d{6}$/.test(s.profile.cpf6 || '') ? s.profile.cpf6 : '';
   return s;
+}
+
+/* categorias novas do plano padrão, acrescentadas a quem já usa o app (id fixo: dois aparelhos não duplicam;
+   upd 0: se o usuário apagar, a exclusão prevalece) */
+const PLAN_UPDATES = [{ v: 2, group: 'Alimentação', kind: 'despesa', item: 'Padaria', id: 'i_pl2_padaria' }];
+function addPlanUpdates(s) {
+  if (!s.config.setupDone) return;
+  const cur = +s.config.planV || 1;
+  PLAN_UPDATES.filter(u => u.v > cur).forEach(u => {
+    const g = s.groups.find(x => x.kind === u.kind && x.name === u.group);
+    const nm = x => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (!g || s.deleted[u.id] || s.items.some(i => i.id === u.id || nm(i.name) === nm(u.item))) return;
+    s.items.push({ id: u.id, groupId: g.id, name: u.item, active: true, upd: 0 });
+  });
+  s.config.planV = Math.max(cur, ...PLAN_UPDATES.map(u => u.v));
 }
 
 /* ---------- backup do sistema antigo (format 2 com módulos, ou estado solto) ---------- */
@@ -143,8 +160,10 @@ export function merge(a, b) {
     out[k] = order.map(id => map.get(id)).filter(r => !(del[r.id] && del[r.id] >= (r.upd || 0)));
   });
   ['profile', 'config'].forEach(k => { out[k] = (b[k].upd || 0) > (a[k].upd || 0) ? b[k] : a[k]; });
-  out.faturaMeta = Object.assign({}, a.faturaMeta);
-  Object.entries(b.faturaMeta).forEach(([key, v]) => { const cur = out.faturaMeta[key]; if (!cur || (v.upd || 0) > (cur.upd || 0)) out.faturaMeta[key] = v; });
+  ['faturaMeta', 'rules'].forEach(k => {
+    out[k] = Object.assign({}, a[k]);
+    Object.entries(b[k]).forEach(([key, v]) => { const cur = out[k][key]; if (!cur || (v.upd || 0) > (cur.upd || 0)) out[k][key] = v; });
+  });
   const limit = Date.now() - TOMBSTONE_DAYS * 864e5;
   out.deleted = Object.fromEntries(Object.entries(del).filter(([, ts]) => ts > limit));
   out.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
@@ -153,7 +172,7 @@ export function merge(a, b) {
 
 /* assinatura do conteúdo, para saber se duas cópias são iguais */
 export function digest(s) {
-  const pick = { profile: s.profile, config: s.config, faturaMeta: s.faturaMeta, deleted: s.deleted };
+  const pick = { profile: s.profile, config: s.config, faturaMeta: s.faturaMeta, rules: s.rules, deleted: s.deleted };
   COLLS.forEach(k => { pick[k] = [...s[k]].sort((x, y) => x.id < y.id ? -1 : 1); });
   const str = JSON.stringify(pick);
   let h = 2166136261;

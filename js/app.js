@@ -4,8 +4,11 @@ import * as sync from './sync.js';
 import * as drive from './drive.js';
 import * as M from './model.js';
 import * as C from './calc.js';
+import * as PT from './imp/pdftext.js';
+import * as P from './imp/parse.js';
+import * as IP from './imp/plan.js';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -279,7 +282,7 @@ function txRow(t, showDate) {
   const tags = (t.seriesId ? `<span class="tag info">${t.seriesIdx}/${t.seriesN}</span>` : '') + (t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : '');
   return `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
     <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${tags}</small></span>
-    <span class="num ${t.type === 'rec' ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : '−'}${C.brl(t.amount)}</span></li>`;
+    <span class="num ${t.type === 'rec' || t.amount < 0 ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : t.amount < 0 ? '+' : '−'}${C.brl(Math.abs(t.amount))}</span></li>`;
 }
 
 /* escolha entre opções (ex.: "só este" / "este e os seguintes"); devolve o valor ou null */
@@ -301,7 +304,7 @@ function askChoice(title, msg, options) {
 /* ----- lançamentos ----- */
 function pageLanc() {
   const st = S(), m = ui.month, q = ui.q || '';
-  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"></div>`;
+  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"><button class="btn" id="imp" title="Importar fatura ou extrato (PDF, CSV, OFX)">Importar</button></div>`;
   if (q.trim()) {
     const res = C.search(st, q);
     html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
@@ -326,6 +329,7 @@ function pageLanc() {
     }
   }
   $('#page').innerHTML = html;
+  $('#imp').onclick = () => pickImportFile({});
   const qi = $('#q');
   qi.oninput = () => { ui.q = qi.value; const pos = qi.selectionStart; pageLanc(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
   $('#page').onclick = e => {
@@ -362,11 +366,12 @@ function txSheet(tx, preset) {
     const kind = type === 'rec' ? 'receita' : 'despesa';
     const defDate = tx ? tx.date : (ui.month === M.todayISO().slice(0, 7) ? M.todayISO() : ui.month + '-01');
     const accSel = tx && tx.type === type ? tx.accountId : (preset && preset.accountId) || '';
+    const origin = tx && tx.origin === 'import' ? `<p class="hint">Importado${tx.rawDesc ? ': ' + esc(tx.rawDesc) : ''}${tx.cardRef ? ' · cartão final ' + esc(tx.cardRef) : ''}.</p>` : '';
     const series = tx && tx.seriesId ? `<p class="hint">${tx.seriesKind === 'parc' ? 'Parcela' : 'Repetição'} ${tx.seriesIdx} de ${tx.seriesN}.</p>` : '';
     const repeat = tx ? '' : type === 'cred'
       ? `<label for="f-n">Parcelas</label><select id="f-n">${Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${i ? (i + 1) + 'x' : 'À vista'}</option>`).join('')}</select>`
       : `<label class="check"><input type="checkbox" id="f-rep"> Repetir todo mês</label><div id="f-repbox" hidden><label for="f-n">Por quantos meses (contando este)</label><input id="f-n" type="number" inputmode="numeric" min="2" max="120" value="12"></div>`;
-    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>${series}
+    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>${series}${origin}
       <div class="seg" id="seg">${['deb', 'cred', 'rec', 'trf'].filter(k => k !== 'cred' || hasCards || type === 'cred').map(k => `<button type="button" data-type="${k}" aria-pressed="${k === type}" ${tx && tx.seriesId && k !== type ? 'disabled' : ''}>${TYPE[k]}</button>`).join('')}</div>
       <label for="f-val" id="f-vallbl">Valor (R$)</label><input id="f-val" inputmode="decimal" value="${tx ? String(tx.amount).replace('.', ',') : ''}" placeholder="0,00">
       <label for="f-date">${type === 'cred' ? 'Data da compra' : 'Data'}</label><input id="f-date" type="date" value="${esc(defDate)}">
@@ -409,14 +414,14 @@ function txSheet(tx, preset) {
       const accountId = panel.querySelector('#f-acc') && panel.querySelector('#f-acc').value;
       const itemId = panel.querySelector('#f-item') ? panel.querySelector('#f-item').value : '';
       const toAccountId = panel.querySelector('#f-to') ? panel.querySelector('#f-to').value : '';
-      if (!(amount > 0)) return toast('Informe um valor maior que zero.', true);
+      if (!(amount > 0) && !(type === 'cred' && amount < 0)) return toast('Informe um valor maior que zero (no cartão, use valor negativo para estorno).', true);
       if (!date) return toast('Informe a data.', true);
       if (!accountId) return toast(type === 'cred' ? 'Cadastre um cartão em Contas.' : 'Escolha a conta.', true);
       if (type !== 'trf' && !itemId) return toast('Escolha a categoria.', true);
       if (type === 'trf' && (!toAccountId || toAccountId === accountId)) return toast('Escolha contas diferentes de origem e destino.', true);
       const status = type === 'cred' ? 'pend' : (panel.querySelector('#f-pend').checked ? 'pend' : 'liq');
       const desc = panel.querySelector('#f-desc').value.trim();
-      const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status };
+      const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status, signed: type === 'cred' };
       const n = nOf();
       let scope = 'one';
       if (tx && tx.seriesId) { scope = await askChoice('Salvar alteração', 'Este lançamento faz parte de uma série.', [{ label: 'Só este', value: 'one' }, { label: 'Este e os seguintes', value: 'next' }]); if (!scope) return; }
@@ -441,6 +446,164 @@ function txSheet(tx, preset) {
   };
   openSheet('', draw);
   setTimeout(() => { const v = $('#f-val'); if (v && !tx) v.focus(); }, 50);
+}
+
+/* ----- importação de faturas e extratos ----- */
+let pdfjsLib = null;
+async function loadPdfjs() {
+  if (pdfjsLib) return pdfjsLib;
+  const lib = await import('../vendor/pdfjs/pdf.min.mjs');
+  lib.GlobalWorkerOptions.workerSrc = new URL('../vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+  return (pdfjsLib = lib);
+}
+
+function busyOverlay(msg) {
+  const box = document.createElement('div');
+  box.className = 'sheet ask'; box.innerHTML = `<div class="panel center"><div class="spinner"></div><p>${esc(msg)}</p></div>`;
+  document.body.appendChild(box);
+  return { set: m => { box.querySelector('p').textContent = m; }, close: () => box.remove() };
+}
+
+/* pede a senha do PDF; ela é usada só nesta abertura e não é guardada */
+function askPassword(wrong) {
+  return new Promise(res => {
+    const box = document.createElement('div');
+    box.className = 'sheet ask';
+    box.innerHTML = `<div class="panel"><h2>PDF com senha</h2>
+      <p class="hint">${wrong ? 'A senha não abriu o arquivo. ' : ''}Digite a senha do PDF. Ela não é guardada em lugar nenhum.</p>
+      <input id="pw" type="password" autocomplete="off" autocapitalize="off" inputmode="text">
+      <div class="actions"><button class="btn" data-v="0">Cancelar</button><button class="btn primary" data-v="1">Abrir</button></div></div>`;
+    document.body.appendChild(box);
+    const inp = box.querySelector('#pw'); setTimeout(() => inp.focus(), 50);
+    const done = ok => { const v = inp.value; box.remove(); res(ok ? v : null); };
+    box.onclick = e => { const b = e.target.closest('[data-v]'); if (b) done(b.dataset.v === '1'); };
+    inp.onkeydown = e => { if (e.key === 'Enter') done(true); };
+  });
+}
+
+async function readStatement(file) {
+  const name = file.name.toLowerCase(), bytes = new Uint8Array(await file.arrayBuffer());
+  const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf' || (bytes[0] === 0x25 && bytes[1] === 0x50);
+  if (isPdf) {
+    const lib = await loadPdfjs();
+    const cpf = S().profile.cpf6 || '';
+    const tries = cpf ? [cpf.slice(0, 4), cpf.slice(0, 5), cpf.slice(0, 6)] : [];
+    const doc = await PT.openPdf(lib, bytes, { tryPasswords: tries, ask: askPassword });
+    const pages = await PT.pdfLines(doc);
+    if (!pages.some(p => p.length)) throw new Error('Este PDF não tem texto (parece ser uma imagem digitalizada). Baixe a fatura ou o extrato direto do site ou app do banco.');
+    return P.parsePdfPages(pages);
+  }
+  if (name.endsWith('.ofx') || /<OFX>/i.test(new TextDecoder('latin1').decode(bytes.slice(0, 600)))) return P.parseOfx(bytes);
+  return P.parseCsv(bytes);
+}
+
+function pickImportFile(preset) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.pdf,.csv,.ofx,.txt,application/pdf,text/csv';
+  inp.onchange = () => { if (inp.files[0]) importFlow(inp.files[0], preset); };
+  inp.click();
+}
+
+async function importFlow(file, preset = {}) {
+  const ov = busyOverlay('Lendo ' + file.name + '…');
+  try {
+    const st = await readStatement(file);
+    ov.close();
+    if (!st.lines.length) return toast('Não encontrei lançamentos neste arquivo. Se for de outro banco, me envie um exemplo para eu ensinar o app a ler.', true);
+    reviewSheet(st, file.name, preset);
+  } catch (e) { ov.close(); toast(e.message || 'Não foi possível ler o arquivo.', true); }
+}
+
+function guessTarget(st, preset) {
+  const s = S();
+  if (preset.accountId && accById(preset.accountId)) return preset.accountId;
+  const want = st.kind === 'fatura' ? 'credito' : 'debito';
+  const list = s.accounts.filter(a => a.nature === want && a.active !== false);
+  const refs = [...new Set(st.lines.map(l => l.cardRef).filter(Boolean))];
+  const nm = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const byRef = list.find(a => refs.some(r => a.name.includes(r)));
+  const byBank = st.bank && list.find(a => nm(a.name).includes(nm(st.bank).split(' ')[0]) || (st.bank === 'Banco do Brasil' && /\bbb\b|ourocard/i.test(nm(a.name))));
+  return (byRef || byBank || list[0] || {}).id || '';
+}
+
+function reviewSheet(stRaw, fileName, preset) {
+  let accountId = guessTarget(stRaw, preset);
+  let comp = stRaw.comp || null;
+  let filter = 'new';
+  let plan = null, st = stRaw;
+  const rebuild = () => {
+    const acc = accById(accountId);
+    st = acc && acc.nature === 'credito' && stRaw.kind !== 'fatura' ? P.asFatura(stRaw) : stRaw;
+    if (acc && acc.nature === 'credito' && !comp) comp = C.cardCycle(acc, (st.lines.map(l => l.date).filter(Boolean).sort().pop()) || M.todayISO()).comp;
+    plan = acc ? IP.buildPlan(S(), st, { accountId, comp }) : null;
+  };
+  rebuild();
+  openSheet('', panel => {
+    panel.classList.add('wide');
+    const draw = () => {
+      const acc = accById(accountId), isCard = acc && acc.nature === 'credito';
+      const count = k => plan ? plan.rows.filter(r => r.status === k || (k === 'ignored' && r.status === 'cardpay')).length : 0;
+      const sel = plan ? plan.rows.filter(r => r.include && r.status !== 'cardpay') : [];
+      const noCat = sel.filter(r => !r.itemId).length;
+      const total = sel.reduce((s, r) => s + r.tx.amount, 0);
+      const inSum = sel.filter(r => r.tx.type === 'rec').reduce((s, r) => s + r.tx.amount, 0), outSum = sel.filter(r => r.tx.type !== 'rec').reduce((s, r) => s + r.tx.amount, 0);
+      const goLabel = isCard ? `Importar ${sel.length} · ${C.brl(total)}` : `Importar ${sel.length}`;
+      const opts = ['credito', 'debito'].map(n => {
+        const l = S().accounts.filter(a => a.nature === n && a.active !== false);
+        return l.length ? `<optgroup label="${n === 'credito' ? 'Cartões' : 'Contas'}">${l.map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : '';
+      }).join('');
+      const chk = st.check || {};
+      const rowsHTML = !plan ? '' : plan.rows.filter(r => filter === 'all' || r.status === filter || (filter === 'ignored' && (r.status === 'cardpay' || r.status === 'already'))).map(r => {
+        const l = r.line, sign = r.tx && r.tx.amount < 0 ? '−' : '';
+        const amt = `<span class="num ${l.dir === 'in' && !isCard ? 'pos' : ''}">${l.dir === 'in' ? (isCard ? '−' : '+') : ''}${C.brl(l.amount)}</span>`;
+        const head = `<div class="irow-h"><label class="check"><input type="checkbox" data-inc="${r.idx}" ${r.include ? 'checked' : ''} ${['ignored', 'already'].includes(r.status) || (r.status === 'cardpay' && !r.fatura) ? 'disabled' : ''}></label>
+          <span class="t"><b>${esc(r.tx ? r.tx.desc : l.desc)}</b><small>${l.date ? C.fmtD(l.date) + '/' + l.date.slice(2, 4) : ''}${l.cardRef ? ' · final ' + esc(l.cardRef) : ''}${sign ? ' · estorno/crédito' : ''}</small></span>${amt}</div>`;
+        let body = '';
+        if (r.status === 'new') body = `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>${r.how && r.how !== 'escolhida' ? `<small class="hint">sugerida por ${r.how}</small>` : ''}`;
+        if (r.status === 'dup') body = `<p class="hint">Parece igual a <b>${esc(r.match.desc || (itemById(r.match.itemId) || {}).name || '')}</b> de ${C.fmtD(r.match.date)} (${C.brl(r.match.amount)}), já lançado. Marque para importar mesmo assim.</p>`;
+        if (r.status === 'ignored' || r.status === 'already') body = `<p class="hint">${esc(r.reason || '')}</p>`;
+        if (r.status === 'cardpay') body = r.fatura ? `<p class="hint">Pagamento de fatura. Marcar a fatura de ${C.monthLabel(r.fatura.comp).toLowerCase()} do ${esc((accById(r.fatura.cardId) || {}).name || '')} (${C.brl(r.fatura.total)}) como paga?${r.fatura.exact ? '' : ' O valor é diferente do total da fatura.'}</p>` : `<p class="hint">${esc(r.reason)} Nenhuma fatura correspondente encontrada.</p>`;
+        return `<li class="irow ${r.status}">${head}${body}</li>`;
+      }).join('');
+      panel.innerHTML = `<h2>Importar ${st.kind === 'fatura' ? 'fatura' : 'extrato'}</h2>
+        <p class="hint">${esc(fileName)}${st.bank ? ' · ' + esc(st.bank) : ''}${st.due ? ' · vence ' + C.fmtD(st.due) + '/' + st.due.slice(0, 4) : ''}</p>
+        <div class="grid2"><div><label for="r-acc">${isCard ? 'Cartão' : 'Conta'}</label><select id="r-acc"><option value="">Escolha…</option>${opts}</select></div>
+        ${isCard ? `<div><label for="r-comp">Fatura de</label><input id="r-comp" type="month" value="${esc(comp || '')}"></div>` : '<div></div>'}</div>
+        ${!S().accounts.some(a => a.nature === (stRaw.kind === 'fatura' ? 'credito' : 'debito') && a.active !== false) ? `<p class="warn">Cadastre ${stRaw.kind === 'fatura' ? 'o cartão' : 'a conta'} em Contas antes de importar.</p>` : ''}
+        ${chk.msg ? `<p class="${chk.ok === true ? 'okbox' : chk.ok === false ? 'warn' : 'hint'}">${chk.ok === true ? '✓ ' : chk.ok === false ? '⚠ ' : ''}${esc(chk.msg)}</p>` : ''}
+        ${plan ? `<div class="seg small" id="r-filter">${[['new', 'Novos'], ['dup', 'Duplicatas'], ['ignored', 'Outros'], ['all', 'Todos']].map(([k, l]) => `<button data-f="${k}" aria-pressed="${filter === k}">${l} ${k === 'all' ? plan.rows.length : k === 'ignored' ? count('ignored') + count('already') : count(k)}</button>`).join('')}</div>
+        <ul class="list irows">${rowsHTML || '<li class="empty">Nada aqui.</li>'}</ul>` : ''}
+        <div class="actions sticky"><button class="btn" id="r-cancel">Cancelar</button><button class="btn primary" id="r-go" ${sel.length || (plan && plan.rows.some(r => r.status === 'cardpay' && r.include)) ? '' : 'disabled'}>${goLabel}</button></div>
+        ${!isCard && sel.length ? `<p class="hint center">Entradas ${C.brl(inSum)} · saídas ${C.brl(outSum)}</p>` : ''}
+        ${noCat ? `<p class="hint center">${noCat} sem categoria: dá para escolher agora ou depois.</p>` : ''}`;
+    };
+    draw();
+    panel.onchange = e => {
+      if (e.target.id === 'r-acc') { accountId = e.target.value; comp = stRaw.comp || null; rebuild(); return draw(); }
+      if (e.target.id === 'r-comp') { comp = e.target.value; rebuild(); return draw(); }
+      if (e.target.dataset.inc) { const r = plan.rows[+e.target.dataset.inc]; r.include = e.target.checked; return draw(); }
+      if (e.target.dataset.cat) {
+        const r = plan.rows[+e.target.dataset.cat];
+        const n = IP.propagate(plan, r, e.target.value);
+        if (n) toast(`Aplicado também a mais ${n} linha(s) do mesmo estabelecimento.`);
+        return draw();
+      }
+    };
+    panel.onclick = async e => {
+      const f = e.target.closest('[data-f]'); if (f) { filter = f.dataset.f; return draw(); }
+      if (e.target.id === 'r-cancel') return closeSheet();
+      if (e.target.id === 'r-go') {
+        let res = null;
+        const months = {};
+        plan.rows.filter(r => r.include && r.tx).forEach(r => { const m = r.tx.comp || r.tx.date.slice(0, 7); months[m] = (months[m] || 0) + 1; });
+        await sync.commit(s => { res = IP.applyPlan(s, plan); });
+        const top = Object.entries(months).sort((a, b) => b[1] - a[1])[0];
+        if (top) ui.month = top[0];
+        closeSheet(); ui.tab = 'lanc'; ui.q = ''; render();
+        toast(`${res.created} lançamento(s) importado(s)${res.paid ? ` · ${res.paid} fatura(s) marcada(s) como paga(s)` : ''}.`);
+      }
+    };
+  });
 }
 
 /* ----- resumo ----- */
@@ -505,12 +668,13 @@ function faturaSheet(cardId, comp) {
       <div class="kpis two"><div class="kpi"><small>Total</small><b class="num">${C.brl(f.total)}</b></div><div class="kpi"><small>Vencimento</small><b>${C.fmtD(f.date)}/${f.date.slice(0, 4)}</b></div></div>
       <p class="hint">${paid ? '✓ Paga' : 'Ainda não paga'} · paga pela conta ${esc((accById(f.accountId) || {}).name || '—')}.</p>
       ${f.list.length ? `<ul class="list">${f.list.map(t => txRow(t, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
-      <div class="actions"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button>${f.list.length ? `<button class="btn ${paid ? '' : 'primary'}" id="fa-pay">${paid ? 'Marcar não paga' : 'Marcar paga'}</button>` : ''}</div>`;
+      <div class="actions"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-imp">Importar</button>${f.list.length ? `<button class="btn ${paid ? '' : 'primary'}" id="fa-pay">${paid ? 'Marcar não paga' : 'Marcar paga'}</button>` : ''}</div>`;
     panel.onclick = async e => {
       const b = e.target.closest('[data-c]'); if (b) { comp = C.mAdd(comp, +b.dataset.c); return faturaSheet(cardId, comp); }
       const li = e.target.closest('[data-tx]'); if (li) return txSheet(S().tx.find(t => t.id === li.dataset.tx));
       if (e.target.id === 'fa-edit') return accSheet(card);
       if (e.target.id === 'fa-new') return txSheet(null, { type: 'cred', accountId: cardId });
+      if (e.target.id === 'fa-imp') { closeSheet(); return pickImportFile({ accountId: cardId }); }
       if (e.target.id === 'fa-pay') {
         await sync.commit(s => { s.faturaMeta[f.key] = Object.assign({}, s.faturaMeta[f.key], { status: paid ? 'pend' : 'liq', upd: Date.now() }); });
         toast(paid ? 'Fatura marcada como não paga.' : 'Fatura marcada como paga. O valor sai do saldo da conta.');
