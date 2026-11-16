@@ -1,6 +1,6 @@
 // Guarda os arquivos do próprio app para abrir sem internet. Nada do Google (login, Drive) passa por aqui.
 // Ao mudar qualquer arquivo do app, aumente VERSION para os aparelhos baixarem a versão nova.
-const VERSION = 'v0.1.1';
+const VERSION = 'v0.1.2';
 const SHELL = ['./', 'index.html', 'style.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/auth.js', 'js/calc.js', 'js/drive.js', 'js/model.js', 'js/store.js', 'js/sync.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];

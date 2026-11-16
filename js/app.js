@@ -5,7 +5,7 @@ import * as drive from './drive.js';
 import * as M from './model.js';
 import * as C from './calc.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.2';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -200,6 +200,15 @@ function wizardCheck() {
 }
 
 async function finishWizard() {
+  /* outro aparelho pode ter feito a configuração enquanto este preenchia: nesse caso, vale o que já está no Drive */
+  if (navigator.onLine && auth.isSignedIn()) {
+    try {
+      if (await sync.remoteExists()) {
+        wz = null; await sync.sync();
+        if (S() && S().config.setupDone) { toast('Seus dados já tinham sido configurados em outro aparelho e foram carregados do Drive.'); return render(); }
+      }
+    } catch { /* sem acesso agora: segue e junta depois */ }
+  }
   const st = M.emptyState();
   const idMap = {};
   wz.accounts.forEach(a => { const n = M.newAccount({ nature: 'debito', name: a.name, initial: C.parseMoney(a.initial) }); idMap[a.id] = n.id; st.accounts.push(n); });
@@ -441,7 +450,7 @@ function pageAjustes() {
   const st = S(), info = sync.syncInfo();
   const signed = auth.isSignedIn();
   $('#page').innerHTML = `
-    <div class="card"><h2>Conta Google</h2><p class="hint">${info.email ? `Dados guardados no Drive de <b>${esc(info.email)}</b>, pasta <b>${esc(drive.FOLDER)}</b>.` : 'Ainda não conectado.'}</p>
+    <div class="card"><h2>Conta Google</h2><p class="hint">${info.email ? `Dados guardados no Drive de <b>${esc(info.email)}</b>, pasta <b>${esc(drive.FOLDER)}</b>.` : (signed ? 'Conectado. Identificando a conta…' : 'Não conectado neste momento. Os dados continuam salvos neste aparelho.')}</p>
       <div id="syncBox">${syncBoxHTML()}</div>
       <div class="row"><button class="btn" data-act="sync">Sincronizar agora</button>${signed ? '' : '<button class="btn primary" data-act="reconnect">Reconectar</button>'}</div></div>
     <div class="card"><h2>CPF para faturas com senha</h2>

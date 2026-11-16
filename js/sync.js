@@ -70,16 +70,23 @@ export async function sync() {
   if (!auth.isSignedIn()) { setStatus('login'); return; }
   running = true; setStatus('syncing');
   try {
-    if (!info.fileId) {
-      const f = await drive.findDataFile();
-      if (f) { info.fileId = f.id; info.version = null; }
+    /* pode haver mais de um arquivo de dados se dois aparelhos fizeram a primeira configuração ao mesmo tempo:
+       junta todos no mais antigo (todos os aparelhos escolhem o mesmo) e manda os outros para a lixeira */
+    const files = await drive.findDataFiles();
+    if (!files.length) { info.fileId = null; info.version = null; }
+    else {
+      const main = files[0];
+      if (info.fileId !== main.id) { info.fileId = main.id; info.version = null; }
+      for (const extra of files.slice(1)) {
+        const other = await drive.download(extra.id);
+        if (model.isState(other)) { S = S ? model.merge(S, model.migrate(other)) : model.migrate(other); await store.set('state', S); emitData(); info.dirty = true; }
+        await drive.trash(extra.id);
+      }
     }
     let remote = null, remoteVer = null;
     if (info.fileId) {
-      let m = null;
-      try { m = await drive.meta(info.fileId); } catch (e) { if (!/ 404:/.test(e.message)) throw e; }
-      if (!m || m.trashed) { info.fileId = null; info.version = null; }
-      else {
+      const m = files[0];
+      {
         remoteVer = String(m.version);
         if (remoteVer !== info.version) {
           remote = await drive.download(info.fileId);
@@ -106,6 +113,10 @@ export async function sync() {
         const u = await drive.update(info.fileId, JSON.stringify(S));
         info.version = String(u.version); info.dirty = false;
       }
+    }
+    if (!info.email) {
+      const u = await drive.whoAmI();
+      info.email = u.emailAddress || ''; auth.setHint(info.email);
     }
     info.lastSync = Date.now();
     await saveInfo();

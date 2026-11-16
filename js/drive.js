@@ -53,6 +53,18 @@ export async function findDataFile() {
   return findOne(`name=${quote(FILE)} and ${quote(folder.id)} in parents`);
 }
 
+/* todos os arquivos de dados do app (pode haver mais de um se dois aparelhos começaram ao mesmo tempo); o mais antigo primeiro */
+export async function findDataFiles() {
+  const folder = await findOne(`name=${quote(FOLDER)} and mimeType='application/vnd.google-apps.folder'`);
+  if (!folder) return [];
+  const d = await api('drive/v3/files?spaces=drive&fields=files(id,version,createdTime)&orderBy=createdTime&q=' +
+    qs(`name=${quote(FILE)} and ${quote(folder.id)} in parents and trashed=false`));
+  return d.files;
+}
+
+/* manda para a lixeira do Drive (dá para recuperar por 30 dias) */
+export const trash = id => api(`drive/v3/files/${id}?fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) });
+
 export const meta = id => api(`drive/v3/files/${id}?fields=id,version,modifiedTime,trashed`);
 export const download = id => api(`drive/v3/files/${id}?alt=media`);
 
