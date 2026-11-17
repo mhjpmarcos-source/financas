@@ -10,7 +10,7 @@ import * as PT from './imp/pdftext.js';
 import * as P from './imp/parse.js';
 import * as IP from './imp/plan.js';
 
-export const VERSION = '0.8.0';
+export const VERSION = '0.8.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -88,6 +88,23 @@ async function boot() {
   lockScreen();
   keepRecurring();
   if (auth.isSignedIn()) sync.schedule(200);
+  else autoRenew();
+  /* app reaberto depois de um tempo (o iPhone costuma deixá-lo na memória): renova o acesso e sincroniza */
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (!hiddenAt || Date.now() - hiddenAt < 60_000) return;
+    if (auth.isSignedIn()) sync.schedule(100); else autoRenew();
+  });
+}
+
+/* acesso ao Drive vencido: renovação silenciosa pelo Google, se nada estiver sendo editado */
+function autoRenew() {
+  const st = S();
+  if (!st || !st.config.setupDone || !$('#sheet').hidden || document.querySelector('.sheet.ask')) return;
+  const box = document.createElement('div'); box.className = 'renew'; box.textContent = 'Conectando ao Drive…';
+  document.body.appendChild(box);
+  if (!auth.silentRenew()) box.remove();
 }
 
 function route() {

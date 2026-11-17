@@ -27,7 +27,11 @@ assert.equal(drive.current().tx.length, 9, 'junção dos dois aparelhos');
 // reabre sem internet
 await A.ctx.setOffline(true); await p.reload(); await p.waitForSelector('.tabs', { timeout: 8000 }); await A.ctx.setOffline(false);
 // acesso vencido → Reconectar
-await p.evaluate(() => localStorage.removeItem('fin.auth.token')); await p.reload(); await p.waitForSelector('.tabs'); await wait(800);
+// acesso vencido → renova sozinho ao abrir
+await p.evaluate(() => localStorage.removeItem('fin.auth.token')); await p.reload(); await p.waitForSelector('.tabs'); await wait(1500);
+assert.match(await p.textContent('#chip'), /Salvo no Drive/);
+// se o Google pedir interação → Reconectar com um toque
+drive.setRenew('fail'); await p.evaluate(() => { localStorage.removeItem('fin.auth.token'); localStorage.removeItem('fin.auth.silent'); }); await p.reload(); await p.waitForSelector('.tabs'); await wait(1500);
 assert.match(await p.textContent('#chip'), /Reconectar/); await p.click('#chip'); await wait(1200); assert.match(await p.textContent('#chip'), /Salvo no Drive/);
 assert.equal(drive.data().length, 1, 'um só arquivo de dados');
 console.log('erros:', [...A.errs, ...B.errs].join('\n') || 'nenhum');

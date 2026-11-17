@@ -232,3 +232,4 @@ body.locked #app, body.locked #sheet, body.locked .sheet.ask{visibility:hidden}
 .okbtn.pix{background:#e6f4ef; color:#0f5d4a; border-color:#bfe3d6; margin-right:6px}
 #px-code{width:100%; font-family:ui-monospace,Menlo,monospace; font-size:12px; word-break:break-all}
 .list li .row{display:flex; gap:6px; flex:0 0 auto}
+.renew{position:fixed; left:50%; top:calc(env(safe-area-inset-top) + 10px); transform:translateX(-50%); z-index:200; background:var(--ink); color:#fff; padding:8px 14px; border-radius:99px; font-size:13px; font-weight:600}

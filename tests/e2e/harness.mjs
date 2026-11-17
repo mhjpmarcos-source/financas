@@ -1,7 +1,7 @@
 /* Simulador de Google (login) e Google Drive para testes de navegador com Playwright.
    Nada sai da máquina: as chamadas ao Google são respondidas aqui. */
 export function createDrive() {
-  const files = {}; let seq = 0;
+  const files = {}; let seq = 0; const renewCalls = []; let renewMode = 'ok';
   const list = q => {
     if (!q) return [];
     const name = (q.match(/name='([^']+)'/) || [])[1], parent = (q.match(/'([^']+)' in parents/) || [])[1], folder = q.includes('folder');
@@ -12,6 +12,12 @@ export function createDrive() {
   async function attach(ctx, email = 'pessoa@exemplo.com') {
     await ctx.route('https://accounts.google.com/gsi/client', r => r.fulfill({ contentType: 'text/javascript', body: `window.google={accounts:{oauth2:{initTokenClient:o=>({requestAccessToken:()=>setTimeout(()=>o.callback({access_token:'tk',expires_in:3599}),10)})}}}` }));
     await ctx.route('https://oauth2.googleapis.com/**', r => r.fulfill({ status: 200, body: '' }));
+    // login por redirecionamento (inclusive a renovação silenciosa, prompt=none): devolve à página com o acesso ou com erro
+    await ctx.route('https://accounts.google.com/o/oauth2/v2/auth**', r => {
+      const u = new URL(r.request().url()); renewCalls.push(u.searchParams.get('prompt'));
+      const back = u.searchParams.get('redirect_uri') + '#' + (renewMode === 'ok' ? 'access_token=tk' + renewCalls.length + '&expires_in=3599&token_type=Bearer' : 'error=interaction_required') + '&state=' + u.searchParams.get('state');
+      return r.fulfill({ status: 302, headers: { location: back } });
+    });
     await ctx.route('https://www.googleapis.com/**', async r => {
       const u = new URL(r.request().url()), m = r.request().method(), path = u.pathname;
       if (path.endsWith('/about')) return r.fulfill({ json: { user: { emailAddress: email } } });
@@ -36,7 +42,7 @@ export function createDrive() {
     });
   }
   const backups = () => Object.values(files).filter(f => /^financas-\d/.test(f.name) && !f.trashed);
-  return { files, data, backups, current: () => { const d = data()[0]; return d && JSON.parse(d.content); }, attach };
+  return { files, data, backups, renewCalls, setRenew: m => { renewMode = m; }, current: () => { const d = data()[0]; return d && JSON.parse(d.content); }, attach };
 }
 
 export async function newDevice(browser, devices, base, drive, label) {
