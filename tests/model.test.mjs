@@ -104,3 +104,23 @@ console.log('model tests OK');
   assert.equal(C.balances(s, '2026-03-01', true)[ca.id], 700);
   console.log('pagamento de fatura tests OK');
 }
+// ---- orçamento, relatório anual, CSV, calendário
+{
+  const s = M.emptyState(); s.config.setupDone = true; const pl = M.defaultPlan(); s.groups = pl.groups; s.items = pl.items;
+  const ca = M.newAccount({ nature: 'debito', name: 'Conta; "X"' }), cc = M.newAccount({ nature: 'credito', name: 'K', closeDay: 25, dueDay: 5, payAccount: ca.id }); s.accounts.push(ca, cc);
+  const merc = s.items.find(i => i.name === 'Mercado'), sal = s.items.find(i => i.name === 'Salário');
+  M.setBudget(s, merc.id, 800); M.setBudget(s, merc.id, 1000, '2026-03');
+  assert.equal(C.budgetOf(s, merc.id, '2026-02'), 800); assert.equal(C.budgetOf(s, merc.id, '2026-03'), 1000);
+  s.tx.push(M.newTx({ type: 'deb', date: '2026-02-10', accountId: ca.id, itemId: merc.id, amount: 600 }));
+  s.tx.push(M.newTx({ type: 'cred', date: '2026-01-20', accountId: cc.id, itemId: merc.id, amount: 300 })); // fatura de 2026-02
+  s.tx.push(M.newTx({ type: 'rec', date: '2026-02-05', accountId: ca.id, itemId: sal.id, amount: 5000 }));
+  const b = C.budgetMonth(s, '2026-02'); assert.equal(b.plan, 800); assert.equal(b.real, 900);
+  assert.equal(C.avgLast(s, merc.id, '2026-05', 3), 300);
+  const Y = C.yearTable(s, 2026); assert.equal(Y.despM[1], 900); assert.equal(Y.recT, 5000); assert.equal(Y.resM[1], 4100);
+  const csv = C.txCsv(s, '2026-01-01', '2026-12-31'); assert(csv.startsWith('﻿Data;')); assert(csv.includes('"Conta; ""X"""')); assert(csv.includes('-600,00')); assert(csv.includes(';5000,00;'));
+  assert(C.yearCsv(s, 2026).includes('RESULTADO;;'));
+  s.tx.push(M.newTx({ type: 'deb', date: '2026-03-10', accountId: ca.id, itemId: merc.id, amount: 50, status: 'pend', desc: 'Conta de luz, março' }));
+  const ics = C.icsPendings(s); assert(ics.includes('BEGIN:VEVENT')); assert(ics.includes('DTSTART;VALUE=DATE:20260310')); assert(ics.includes('Conta de luz\\, março')); assert((ics.match(/BEGIN:VEVENT/g) || []).length, 2);
+  const a = M.clone(s), c2 = M.clone(s); M.setBudget(c2, sal.id, 5000); assert.equal(M.merge(a, c2).orc[sal.id].def, 5000);
+  console.log('orçamento/anual/csv/ics tests OK');
+}

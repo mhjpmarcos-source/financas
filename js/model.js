@@ -49,7 +49,7 @@ export function emptyState() {
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
     accounts: [], groups: [], items: [], tx: [], loans: [],
-    faturaMeta: {}, rules: {}, deleted: {}
+    faturaMeta: {}, rules: {}, orc: {}, deleted: {}
   };
 }
 
@@ -101,6 +101,7 @@ export function migrate(s) {
   if (!s.faturaMeta || typeof s.faturaMeta !== 'object') s.faturaMeta = {};
   if (!s.deleted || typeof s.deleted !== 'object') s.deleted = {};
   if (!s.rules || typeof s.rules !== 'object') s.rules = {};
+  if (!s.orc || typeof s.orc !== 'object') s.orc = {};
   addPlanUpdates(s);
   COLLS.forEach(k => s[k].forEach(r => { if (!r.id) r.id = uid(k[0]); if (typeof r.upd !== 'number') r.upd = 0; }));
   s.profile.cpf6 = /^\d{6}$/.test(s.profile.cpf6 || '') ? s.profile.cpf6 : '';
@@ -164,7 +165,7 @@ export function merge(a, b) {
     out[k] = order.map(id => map.get(id)).filter(r => !(del[r.id] && del[r.id] >= (r.upd || 0)));
   });
   ['profile', 'config'].forEach(k => { out[k] = (b[k].upd || 0) > (a[k].upd || 0) ? b[k] : a[k]; });
-  ['faturaMeta', 'rules'].forEach(k => {
+  ['faturaMeta', 'rules', 'orc'].forEach(k => {
     out[k] = Object.assign({}, a[k]);
     Object.entries(b[k]).forEach(([key, v]) => { const cur = out[k][key]; if (!cur || (v.upd || 0) > (cur.upd || 0)) out[k][key] = v; });
   });
@@ -176,7 +177,7 @@ export function merge(a, b) {
 
 /* assinatura do conteúdo, para saber se duas cópias são iguais */
 export function digest(s) {
-  const pick = { profile: s.profile, config: s.config, faturaMeta: s.faturaMeta, rules: s.rules, deleted: s.deleted };
+  const pick = { profile: s.profile, config: s.config, faturaMeta: s.faturaMeta, rules: s.rules, orc: s.orc, deleted: s.deleted };
   COLLS.forEach(k => { pick[k] = [...s[k]].sort((x, y) => x.id < y.id ? -1 : 1); });
   const str = JSON.stringify(pick);
   let h = 2166136261;
@@ -281,4 +282,15 @@ export function loanStatus(state, loan) {
 export function removeLoan(state, loanId) {
   state.tx.filter(t => t.loanId === loanId && t.status !== 'liq' && !t.loanStart).forEach(t => removeRecord(state, 'tx', t.id));
   removeRecord(state, 'loans', loanId);
+}
+
+/* ---------- orçamento ----------
+   orc[itemId] = { def: valor mensal padrão, months: { 'AAAA-MM': valor só daquele mês }, upd } */
+export function setBudget(state, itemId, value, month) {
+  const cur = state.orc[itemId] ? clone(state.orc[itemId]) : { def: 0, months: {} };
+  const v = Math.round(Math.max(0, +value || 0) * 100) / 100;
+  if (month) cur.months[month] = v; else { cur.def = v; cur.months = {}; }
+  cur.upd = Date.now();
+  if (!cur.def && !Object.values(cur.months).some(Boolean)) { state.orc[itemId] = { def: 0, months: {}, upd: cur.upd }; return; }
+  state.orc[itemId] = cur;
 }

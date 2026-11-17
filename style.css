@@ -181,3 +181,20 @@ input[type=checkbox]{width:22px; height:22px; min-height:0; accent-color:var(--b
 @media (min-width:900px){ .top{padding-right:720px} }
 .list.full .t b, .list.full .t small, .list.wrap .t b{white-space:normal}
 .actions.wrap{flex-wrap:wrap} .actions.wrap .btn{flex:1 1 40%} h3.sub{font-size:14px; color:var(--muted); margin:14px 0 0}
+
+/* Fase 2b-2: orçamento, ano, lembretes */
+.list.budget li{cursor:pointer}
+.list.budget .bar{margin:6px 0 4px}
+.bar.over{background:color-mix(in srgb,var(--neg) 18%,transparent)}
+.scrollx{overflow-x:auto; padding:6px 0; -webkit-overflow-scrolling:touch}
+table.year{border-collapse:separate; border-spacing:0; font-size:13px; font-variant-numeric:tabular-nums; white-space:nowrap; margin:0}
+table.year th, table.year td{padding:6px 8px; text-align:right; border-bottom:1px solid var(--line)}
+table.year th{color:var(--muted); font-weight:600}
+table.year .sticky{position:sticky; left:0; background:var(--card); text-align:left; max-width:150px; overflow:hidden; text-overflow:ellipsis; z-index:1}
+table.year tr.t td{font-weight:700; background:var(--bg)} table.year tr.t .sticky{background:var(--bg)}
+table.year tr.t.pos td{color:var(--pos)} table.year tr.res td{border-top:2px solid var(--ink)}
+table.year tr.g td{font-weight:600}
+table.year tr.i td{color:var(--muted); font-size:12px} table.year tr.i .sticky{padding-left:22px}
+.tabs button.badge{position:relative}
+.tabs button.badge::after{content:''; position:absolute; top:10px; left:calc(50% + 8px); width:9px; height:9px; border-radius:50%; background:var(--neg)}
+table.year th[data-cur]{color:var(--ink)}

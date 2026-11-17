@@ -171,3 +171,97 @@ export function faturaCandidates(S, { accountId, cardId, date, amount }) {
     .filter(f => !date || f.dist <= 75)
     .sort((a, b) => (b.exact - a.exact) || (a.dist - b.dist));
 }
+
+/* ---------- orçamento ---------- */
+export function budgetOf(S, itemId, m) {
+  const o = S.orc && S.orc[itemId]; if (!o) return 0;
+  return o.months && o.months[m] != null ? +o.months[m] : (+o.def || 0);
+}
+/* planejado × realizado do mês, por grupo e categoria (só categorias com orçamento ou gasto) */
+export function budgetMonth(S, m, kind = 'despesa') {
+  const real = {};
+  byCategory(S, m, kind).forEach(g => g.items.forEach(i => { real[i.id] = i.total; }));
+  const out = S.groups.filter(g => g.kind === kind).map(g => {
+    const items = S.items.filter(i => i.groupId === g.id).map(i => ({ id: i.id, name: i.name, plan: r2(budgetOf(S, i.id, m)), real: r2(real[i.id] || 0) }))
+      .filter(i => i.plan || i.real);
+    return { id: g.id, name: g.name, color: g.color, items, plan: r2(items.reduce((s, i) => s + i.plan, 0)), real: r2(items.reduce((s, i) => s + i.real, 0)) };
+  }).filter(g => g.items.length);
+  const noCat = real._ || 0;
+  return { groups: out, plan: r2(out.reduce((s, g) => s + g.plan, 0)), real: r2(out.reduce((s, g) => s + g.real, 0) + noCat), noCat: r2(noCat) };
+}
+/* média mensal dos últimos n meses fechados antes de m (para sugerir orçamento) */
+export function avgLast(S, itemId, m, n = 3) {
+  let s = 0;
+  for (let i = 1; i <= n; i++) { const mm = mAdd(m, -i); byCategory(S, mm).forEach(g => g.items.forEach(x => { if (x.id === itemId) s += x.total; })); }
+  return r2(s / n);
+}
+
+/* ---------- relatório anual ---------- */
+export function yearTable(S, year) {
+  const months = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`);
+  const build = kind => {
+    const per = months.map(m => byCategory(S, m, kind));
+    const groups = {};
+    per.forEach((list, mi) => list.forEach(g => {
+      const G = groups[g.id] = groups[g.id] || { id: g.id, name: g.name, color: g.color, months: Array(12).fill(0), items: {} };
+      G.months[mi] = r2(G.months[mi] + g.total);
+      g.items.forEach(it => { const I = G.items[it.id] = G.items[it.id] || { id: it.id, name: it.name, months: Array(12).fill(0) }; I.months[mi] = r2(I.months[mi] + it.total); });
+    }));
+    return Object.values(groups).map(g => ({ ...g, total: r2(g.months.reduce((a, b) => a + b, 0)), items: Object.values(g.items).map(i => ({ ...i, total: r2(i.months.reduce((a, b) => a + b, 0)) })).sort((a, b) => b.total - a.total) }))
+      .sort((a, b) => b.total - a.total);
+  };
+  const rec = build('receita'), desp = build('despesa');
+  const sumM = list => months.map((_, i) => r2(list.reduce((s, g) => s + g.months[i], 0)));
+  const recM = sumM(rec), despM = sumM(desp);
+  return { months, rec, desp, recM, despM, resM: recM.map((v, i) => r2(v - despM[i])), recT: r2(recM.reduce((a, b) => a + b, 0)), despT: r2(despM.reduce((a, b) => a + b, 0)) };
+}
+
+/* ---------- exportação ---------- */
+const csvCell = v => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+const csvNum = v => (Math.round(v * 100) / 100).toFixed(2).replace('.', ',');
+export function toCsv(rows) { return '\uFEFF' + rows.map(r => r.map(csvCell).join(';')).join('\r\n') + '\r\n'; }
+
+/* lançamentos de um período (por data; cartão também pela competência), valor com sinal: entrada +, saída − */
+export function txCsv(S, from, to) {
+  const TYPE = { rec: 'Receita', deb: 'Despesa', cred: 'Cartão', trf: 'Transferência' };
+  const acc = id => (S.accounts.find(a => a.id === id) || {}).name || '';
+  const rows = [['Data', 'Competência', 'Tipo', 'Descrição', 'Categoria', 'Grupo', 'Conta/Cartão', 'Conta destino', 'Valor', 'Situação', 'Parcela', 'Origem']];
+  S.tx.filter(t => { const d = t.type === 'cred' ? txComp(S, t) + '-01' : t.date; return (!from || d >= from) && (!to || d <= to); })
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach(t => {
+      const it = S.items.find(i => i.id === t.itemId), g = it && S.groups.find(x => x.id === it.groupId);
+      const signed = t.type === 'rec' ? t.amount : -t.amount;
+      rows.push([t.date.split('-').reverse().join('/'), txComp(S, t).split('-').reverse().join('/'), t.cardPay ? 'Pagamento de fatura' : TYPE[t.type] || t.type, t.desc || '',
+        it ? it.name : '', g ? g.name : '', acc(t.accountId), t.type === 'trf' ? acc(t.toAccountId) : '', csvNum(signed),
+        t.status === 'pend' ? 'Pendente' : 'Confirmado', t.seriesId ? `${t.seriesIdx}/${t.seriesN}` : '', t.origin === 'import' ? 'Importado' : 'Manual']);
+    });
+  return toCsv(rows);
+}
+export function yearCsv(S, year) {
+  const Y = yearTable(S, year), head = ['Grupo', 'Categoria', ...Y.months.map(m => m.slice(5) + '/' + m.slice(0, 4)), 'Total'];
+  const rows = [head];
+  const add = (title, list, tot, totT) => {
+    rows.push([title, '', ...tot.map(csvNum), csvNum(totT)]);
+    list.forEach(g => { rows.push([g.name, '', ...g.months.map(csvNum), csvNum(g.total)]); g.items.forEach(i => rows.push(['', i.name, ...i.months.map(csvNum), csvNum(i.total)])); });
+  };
+  add('RECEITAS', Y.rec, Y.recM, Y.recT); add('DESPESAS', Y.desp, Y.despM, Y.despT);
+  rows.push(['RESULTADO', '', ...Y.resM.map(csvNum), csvNum(Y.recT - Y.despT)]);
+  return toCsv(rows);
+}
+
+/* ---------- lembretes: arquivo de calendário (.ics) com os vencimentos pendentes ---------- */
+const icsEsc = s => String(s || '').replace(/[\\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
+export function icsPendings(S, { until, hour = 9, appName = 'Finanças' } = {}) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//' + appName + '//PT-BR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:' + icsEsc(appName + ' · vencimentos')];
+  pendings(S, until).forEach(p => {
+    const d = p.date.replace(/-/g, ''), next = new Date(Date.parse(p.date + 'T12:00') + 864e5).toISOString().slice(0, 10).replace(/-/g, '');
+    const card = p.kind === 'fatura' && S.accounts.find(a => a.id === p.fatura.cardId);
+    const title = p.kind === 'fatura' ? `Pagar fatura ${card ? card.name : ''}: ${brl(p.amount)}` : `${p.dir === 'in' ? 'Receber' : 'Pagar'}: ${p.tx.desc || ((S.items.find(i => i.id === p.tx.itemId) || {}).name) || ''} ${brl(p.amount)}`;
+    const uid = (p.kind === 'fatura' ? 'fat-' + p.fatura.key.replace('|', '-') : 'tx-' + p.tx.id) + '@financas';
+    lines.push('BEGIN:VEVENT', 'UID:' + uid, 'DTSTAMP:' + stamp, 'DTSTART;VALUE=DATE:' + d, 'DTEND;VALUE=DATE:' + next, 'SUMMARY:' + icsEsc(title.replace(/\s+/g, ' ').trim()),
+      'TRANSP:TRANSPARENT', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(title), `TRIGGER:-PT${24 - hour}H`, 'END:VALARM', 'END:VEVENT');
+  });
+  lines.push('END:VCALENDAR');
+  return lines.map(l => l.length > 74 ? l.match(/.{1,73}/g).join('\r\n ') : l).join('\r\n') + '\r\n';
+}
