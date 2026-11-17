@@ -5,7 +5,7 @@
 
 export const APP = 'financas';
 export const FORMAT = 3;
-export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans', 'res'];
+export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans', 'res', 'rec', 'people'];
 const TOMBSTONE_DAYS = 180;
 
 export const uid = p => (p || 'x') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -48,7 +48,7 @@ export function emptyState() {
     app: APP, format: FORMAT, createdAt: new Date().toISOString(), updatedAt: 0,
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
-    accounts: [], groups: [], items: [], tx: [], loans: [], res: [],
+    accounts: [], groups: [], items: [], tx: [], loans: [], res: [], rec: [], people: [],
     faturaMeta: {}, rules: {}, orc: {}, deleted: {}
   };
 }
@@ -220,7 +220,119 @@ export function makeSeries(f, n, firstComp) {
   if (f.type === 'cred') {
     return splitAmount(f.amount, n).map((amount, i) => newTx({ ...f, amount, comp: mAddM(firstComp, i), seriesId: sid, seriesIdx: i + 1, seriesN: n, kind: 'parc' }));
   }
+  if (f.kind === 'parc') return splitAmount(f.amount, n).map((amount, i) => newTx({ ...f, amount, date: addMonthsDate(f.date, i), seriesId: sid, seriesIdx: i + 1, seriesN: n, kind: 'parc' }));
   return Array.from({ length: n }, (_, i) => newTx({ ...f, date: addMonthsDate(f.date, i), seriesId: sid, seriesIdx: i + 1, seriesN: n, kind: 'rep' }));
+}
+
+export function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+const r2m = v => Math.round(v * 100) / 100;
+const dayIn = (m, d) => m + '-' + pad2(Math.min(Math.max(1, d || 1), new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate()));
+const pendOpen = t => t.type === 'cred' ? !!t.prev : t.status === 'pend';
+
+/* ----- despesas e receitas que se repetem todo mês, sem data para acabar -----
+   fixa: mesmo valor todo mês; var (variável): sempre existe, valor muda (previsto = média dos 3 últimos meses confirmados).
+   rec: {id, kind, type:'deb'|'rec'|'cred', desc, itemId, accountId, amount, day, start:'AAAA-MM', end:'' | 'AAAA-MM', gen}
+   Cada mês vira um lançamento com id fixo (t_r_<regra>_<geração>_<AAAAMM>), criado até 12 meses à frente.
+   O mesmo id em todos os aparelhos evita duplicar; um mês excluído à mão não volta (fica a marca de exclusão).
+   prev: true = valor ainda é previsão (não confirmado por pagamento ou importação). */
+export const REC_AHEAD = 12;
+export function newRec(f) {
+  return touch({ id: uid('r'), kind: f.kind === 'var' ? 'var' : 'fixa', type: f.type, desc: String(f.desc || '').trim(), itemId: f.itemId || '', accountId: f.accountId,
+    amount: r2m(Math.abs(+f.amount || 0)), day: Math.min(31, Math.max(1, +f.day || 1)), start: f.start, end: f.end || '', gen: 0, person: f.person || '' });
+}
+export const recOccId = (r, m) => `t_r_${r.id}_${r.gen || 0}_${m.replace('-', '')}`;
+export const recOccs = (S, r) => S.tx.filter(t => t.recId === r.id).sort((a, b) => a.recM < b.recM ? -1 : a.recM > b.recM ? 1 : 0);
+export function recEstimate(S, r) {
+  if (r.kind !== 'var') return r.amount;
+  const real = recOccs(S, r).filter(t => !t.prev && (t.type === 'cred' || t.status === 'liq')).slice(-3);
+  return real.length ? r2m(real.reduce((s, t) => s + Math.abs(t.amount), 0) / real.length) : r.amount;
+}
+/* primeiro lançamento (o do mês em que foi cadastrada), com o que a pessoa informou */
+export function recFirst(S, r, f) {
+  const t = newTx({ type: r.type, date: f.date, accountId: r.accountId, itemId: r.itemId, amount: f.amount, desc: r.desc, status: f.status, signed: r.type === 'cred' });
+  t.id = recOccId(r, r.start); t.recId = r.id; t.recM = r.start;
+  if (r.type === 'cred') t.prev = false; else if (t.status === 'pend') t.prev = true;
+  S.tx.push(t); return t;
+}
+/* cria os meses que faltam (até 12 meses à frente) e atualiza a previsão das variáveis. Devolve quantas mudanças fez. */
+export function ensureRecurring(S, today = todayISO(), dry = false) {
+  let n = 0; const until = mAddM(today.slice(0, 7), REC_AHEAD);
+  const have = new Set(S.tx.filter(t => t.recId).map(t => t.recId + '|' + t.recM)), byId = new Map(S.tx.map(t => [t.id, t]));
+  for (const r of S.rec || []) {
+    const last = r.end && r.end < until ? r.end : until, est = recEstimate(S, r);
+    for (let m = r.start; m <= last; m = mAddM(m, 1)) {
+      const id = recOccId(r, m), cur = byId.get(id);
+      if (cur) { if (cur.prev && r.kind === 'var' && Math.abs(Math.abs(cur.amount) - est) > 0.004) { n++; if (!dry) { cur.amount = est; touch(cur); } } continue; }
+      if (S.deleted[id] || have.has(r.id + '|' + m)) continue;
+      if (dry) { n++; continue; }
+      const t = newTx({ type: r.type, date: dayIn(m, r.day), accountId: r.accountId, itemId: r.itemId, amount: est, desc: r.desc, status: 'pend' });
+      Object.assign(t, { id, recId: r.id, recM: m, prev: true });
+      S.tx.push(t); n++;
+    }
+  }
+  return n;
+}
+/* altera a regra e os meses ainda em aberto a partir de fromM */
+export function editRec(S, r, f, fromM) {
+  ['kind', 'desc', 'itemId', 'accountId', 'amount', 'day', 'person'].forEach(k => { if (f[k] !== undefined) r[k] = k === 'amount' ? r2m(Math.abs(+f[k] || 0)) : f[k]; });
+  touch(r);
+  let n = 0;
+  recOccs(S, r).filter(t => t.recM >= fromM && pendOpen(t)).forEach(t => {
+    t.desc = r.desc; t.itemId = r.itemId; t.accountId = r.accountId; t.date = dayIn(t.recM, r.day);
+    if (r.kind === 'fixa') t.amount = r.amount;
+    t.prev = true; delete t.comp; touch(t); n++;
+  });
+  return n;
+}
+/* encerra: o último mês é endM; os meses seguintes ainda em aberto são apagados */
+export function endRec(S, r, endM) {
+  r.end = endM; touch(r);
+  const ids = recOccs(S, r).filter(t => t.recM > endM && pendOpen(t)).map(t => t.id);
+  ids.forEach(id => removeRecord(S, 'tx', id));
+  return ids.length;
+}
+export function reopenRec(S, r) { r.end = ''; r.gen = (r.gen || 0) + 1; touch(r); }
+export function removeRec(S, r) {
+  recOccs(S, r).filter(pendOpen).forEach(t => removeRecord(S, 'tx', t.id));
+  recOccs(S, r).forEach(t => { delete t.recId; delete t.recM; touch(t); });
+  removeRecord(S, 'rec', r.id);
+}
+/* liga lançamentos antigos a uma regra (para a média e para não gerar de novo os meses que já existem) */
+export function linkToRec(S, r, txIds) {
+  txIds.forEach(id => { const t = S.tx.find(x => x.id === id); if (t && !t.recId) { t.recId = r.id; t.recM = t.date.slice(0, 7); delete t.prev; touch(t); } });
+}
+
+/* ----- parcelas futuras previstas de compras parceladas importadas da fatura -----
+   chave: cartão + descrição + data da compra + nº de parcelas; parcela k tem id t_p_<chave>_<k>.
+   Quando a fatura seguinte chega, a parcela real ocupa o mesmo id (substitui a previsão, sem duplicar). */
+export const normDesc = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+export const parcKey = (cardId, desc, date, n) => hashStr([cardId, normDesc(desc), date, n].join('|'));
+export const parcId = (key, k) => `t_p_${key}_${k}`;
+export function projectParcels(S, base, key, i, n, cleanDesc) {
+  let c = 0;
+  for (let k = i + 1; k <= n; k++) {
+    const id = parcId(key, k);
+    if (S.deleted[id] || S.tx.some(t => t.id === id)) continue;
+    const t = newTx({ type: 'cred', date: base.date, accountId: base.accountId, itemId: base.itemId, amount: base.amount, desc: `${cleanDesc} (${k}/${n})`, signed: true, origin: 'previsao' });
+    Object.assign(t, { id, comp: mAddM(base.comp, k - i), prev: true, parcKey: key, parcI: k, parcN: n });
+    S.tx.push(t); c++;
+  }
+  return c;
+}
+/* quanto falta de cada compra parcelada (previstas + em aberto), por cartão */
+export function parcelPlans(S) {
+  const g = new Map();
+  S.tx.filter(t => t.parcKey || (t.seriesId && t.seriesKind === 'parc')).forEach(t => {
+    const k = t.parcKey || t.seriesId;
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(t);
+  });
+  return [...g.values()];
+}
+
+/* ----- pessoas (a quem devo / quem me deve), com chave Pix opcional ----- */
+export function newPerson(f) {
+  return touch({ id: uid('p'), name: String(f.name || '').trim(), pixKey: String(f.pixKey || '').trim(), city: String(f.city || '').trim() });
 }
 export const seriesMembers = (state, t) => t.seriesId ? state.tx.filter(x => x.seriesId === t.seriesId).sort((a, b) => a.seriesIdx - b.seriesIdx) : [t];
 

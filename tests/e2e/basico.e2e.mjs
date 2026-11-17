@@ -13,7 +13,7 @@ let d = drive.current(); assert(d, 'arquivo criado no Drive'); assert.equal(d.pr
 assert(d.items.some(i => i.name === 'Padaria'));
 // despesa e compra parcelada
 await p.click('#fab'); await p.fill('#f-val', '45,90'); await p.selectOption('#f-item', { label: 'Padaria' }); await p.click('#f-save'); await wait(300);
-await p.click('#fab'); await p.click('[data-type=cred]'); await p.fill('#f-val', '600'); await p.fill('#f-date', '2026-11-28'); await p.selectOption('#f-item', { label: 'Compras diversas' }); await p.selectOption('#f-n', '6'); await p.click('#f-save'); await wait(1500);
+await p.click('#fab'); await p.click('[data-type=cred]'); await p.fill('#f-val', '600'); await p.fill('#f-date', '2026-11-28'); await p.selectOption('#f-item', { label: 'Compras diversas' }); await p.selectOption('#f-freq', 'parc'); await p.selectOption('#f-n', '6'); await p.click('#f-save'); await wait(1500);
 d = drive.current(); assert.equal(d.tx.length, 7);
 // segundo aparelho vê os dados; alteração offline em A e simultânea em B se juntam
 const B = await newDevice(browser, devices, BASE, drive, 'B'); const q = B.page;

@@ -6,7 +6,7 @@ import * as M from '../model.js';
 import * as C from '../calc.js';
 
 const days = (a, b) => Math.abs(Math.round((Date.parse(a + 'T12:00') - Date.parse(b + 'T12:00')) / 864e5));
-function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+const hash = M.hashStr;
 
 /* st: documento lido; accountId: conta (extrato) ou cartão (fatura); comp: mês da fatura */
 export function buildPlan(S, st, { accountId, comp }) {
@@ -16,6 +16,8 @@ export function buildPlan(S, st, { accountId, comp }) {
   const used = new Set();
   const seen = {};
   const existingKeys = new Set(S.tx.filter(t => t.impKey).map(t => t.impKey));
+  const byId = new Map(S.tx.map(t => [t.id, t])), usedParc = {};
+  let projN = 0;
   const rows = st.lines.map((l, idx) => {
     const row = { idx, line: l, include: false, status: '', itemId: '', how: '', match: null, tx: null };
     if (!l.date) { row.status = 'ignored'; row.reason = 'Data não reconhecida'; return row; }
@@ -39,19 +41,61 @@ export function buildPlan(S, st, { accountId, comp }) {
       row.tx.desc = 'Pagamento de fatura · ' + (l.detail || l.desc).replace(/^Pagto cart[aã]o cr[eé]dito\s*·?\s*/i, '');
       return row;
     }
+    const c = classify({ ...l, kindHint: isCard && l.dir === 'in' ? 'estorno' : '' });
+    // compra parcelada na fatura: id da parcela fixo (cartão + compra + nº de parcelas), para a próxima fatura achar a mesma
+    if (isCard && l.parc && l.dir !== 'in') {
+      let key = M.parcKey(accountId, l.desc, l.date, l.parc.n);
+      usedParc[key] = (usedParc[key] || 0) + 1; if (usedParc[key] > 1) key += '-' + usedParc[key];
+      Object.assign(row, { parcKey: key, parcI: l.parc.i, parcN: l.parc.n, cleanDesc: l.desc });
+      const same = byId.get(M.parcId(key, l.parc.i));
+      if (same && !same.prev) { row.status = 'already'; row.reason = 'Esta parcela já está lançada'; return row; }
+      for (let k = l.parc.i + 1; k <= l.parc.n; k++) { const id = M.parcId(key, k); if (!byId.has(id) && !S.deleted[id]) { row.projN = (row.projN || 0) + 1; } }
+      projN += row.projN || 0;
+      if (same) return prevRow(row, same, 'Parcela que estava prevista');
+    }
+    const prev = findPrev(S, row.tx, l, isCard, used, c.itemId);
+    if (prev) return prevRow(row, prev, prev.recId ? 'Confirma o valor previsto da conta que se repete' : 'Parcela que estava prevista');
     const dup = findManual(S, row.tx, used, isCard);
     if (dup) { used.add(dup.id); row.status = 'dup'; row.match = dup; row.reason = 'Parece já lançado'; return row; }
-    const c = classify({ ...l, kindHint: isCard && l.dir === 'in' ? 'estorno' : '' });
     row.itemId = c.itemId; row.how = c.how; row.key = c.key;
     row.status = 'new'; row.include = true;
     return row;
+    function prevRow(r, x, reason) { used.add(x.id); r.status = 'prev'; r.match = x; r.reason = reason; r.include = true; r.itemId = x.itemId; return r; }
   });
-  return { rows, isCard, accountId, comp };
+  return { rows, isCard, accountId, comp, projN, project: projN > 0 };
+}
+
+/* lançamento previsto (parcela futura ou mês de conta que se repete) que esta linha confirma */
+function findPrev(S, t, l, isCard, used, itemId) {
+  const amt = Math.abs(t.amount);
+  const cands = S.tx.filter(x => x.prev && !used.has(x.id) && x.accountId === t.accountId && x.type === t.type);
+  if (isCard && l.parc) {
+    const nd = M.normDesc(l.desc);
+    const hit = cands.find(x => x.parcI === l.parc.i && x.parcN === l.parc.n && C.txComp(S, x) === t.comp && M.normDesc(x.desc.replace(/\(\d+\/\d+\)\s*$/, '')) === nd && Math.abs(Math.abs(x.amount) - amt) <= Math.max(1, amt * 0.02));
+    if (hit) return hit;
+  }
+  const words = s => new Set(M.normDesc(s).split(' ').filter(w => w.length >= 4 && !/^\d+$/.test(w)));
+  const lw = words(l.desc + ' ' + (l.title || '') + ' ' + (l.detail || ''));
+  let best = null;
+  for (const x of cands) {
+    if (!x.recId) continue;
+    const r = (S.rec || []).find(y => y.id === x.recId); if (!r) continue;
+    const xa = Math.abs(x.amount), dd = days(x.date, t.date);
+    if (isCard ? C.txComp(S, x) !== t.comp : dd > 12) continue;
+    const exact = Math.abs(xa - amt) < 0.005;
+    const okAmt = r.kind === 'fixa' ? Math.abs(xa - amt) <= Math.max(0.5, amt * 0.03) : amt >= xa * 0.3 && amt <= xa * 2.5;
+    if (!okAmt) continue;
+    const rw = words(r.desc + ' ' + (r.words || ''));
+    if (!([...lw].some(w => rw.has(w)) || (itemId && itemId === x.itemId) || (r.kind === 'fixa' && exact))) continue;
+    const score = (isCard ? 0 : dd) + (exact ? 0 : 1);
+    if (!best || score < best.score) best = { x, score };
+  }
+  return best ? best.x : null;
 }
 
 /* lançamento existente (feito à mão ou de outra importação) com mesmo valor e data próxima */
 function findManual(S, t, used, isCard) {
-  const cands = S.tx.filter(x => !used.has(x.id) && x.accountId === t.accountId && x.type === t.type && Math.abs(x.amount - t.amount) < 0.005 && !(x.impKey && x.impKey === t.impKey));
+  const cands = S.tx.filter(x => !x.prev && !used.has(x.id) && x.accountId === t.accountId && x.type === t.type && Math.abs(x.amount - t.amount) < 0.005 && !(x.impKey && x.impKey === t.impKey));
   let best = null;
   for (const x of cands) {
     let score;
@@ -78,10 +122,24 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
   plan.rows.forEach(r => {
     if (r.status === 'cardpay' && r.include) { r.tx.faturaKey = r.fatura ? r.fatura.key : ''; if (r.fatura) paid++; }
     if (!r.include || !r.tx) return;
+    if (r.status === 'prev') {
+      // a linha confirma o previsto: o lançamento existente passa a ter os dados reais (sem criar outro)
+      const x = S.tx.find(y => y.id === r.match.id); if (!x) return;
+      x.amount = Math.round(r.tx.amount * 100) / 100; x.date = r.tx.date; x.prev = false; x.origin = 'import';
+      if (r.tx.type !== 'cred') x.status = 'liq'; else x.comp = r.tx.comp;
+      if (x.parcKey) x.desc = r.tx.desc;
+      ['impKey', 'rawDesc', 'doc', 'cardRef'].forEach(k => { if (r.tx[k]) x[k] = r.tx[k]; });
+      if (x.recId) { const rr = (S.rec || []).find(y => y.id === x.recId); if (rr) { rr.words = M.normDesc(r.line.desc); M.touch(rr); } }
+      M.touch(x); created++;
+      if (plan.project && r.parcKey) M.projectParcels(S, x, r.parcKey, r.parcI, r.parcN, r.cleanDesc);
+      return;
+    }
     const t = M.newTx({ ...r.tx, itemId: r.itemId, status: r.tx.type === 'cred' ? 'pend' : 'liq', origin: 'import', signed: true });
     ['impKey', 'rawDesc', 'doc', 'cardRef', 'cardPay', 'faturaKey'].forEach(k => { if (r.tx[k]) t[k] = r.tx[k]; });
     if (t.cardPay) t.itemId = '';
+    if (r.parcKey) { const id = M.parcId(r.parcKey, r.parcI); if (!S.tx.some(y => y.id === id)) t.id = id; Object.assign(t, { parcKey: r.parcKey, parcI: r.parcI, parcN: r.parcN }); }
     S.tx.push(t); created++;
+    if (plan.project && r.parcKey) M.projectParcels(S, t, r.parcKey, r.parcI, r.parcN, r.cleanDesc);
     if (r.itemId && r.key && r.how !== 'regra' && r.how !== 'histórico') {
       const dir = r.tx.type === 'rec' ? 'in' : 'out';
       S.rules[dir + ':' + r.key] = { itemId: r.itemId, upd: Date.now() }; learned++;

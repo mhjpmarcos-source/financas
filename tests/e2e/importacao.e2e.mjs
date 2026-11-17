@@ -35,8 +35,10 @@ assert.match(await p.textContent('li.irow.cardpay'), /idêntico/);
 await p.click('#r-go'); await wait(1500);
 d = drive.current(); assert.equal(d.tx.filter(t => t.cardPay && t.faturaKey).length, 1, 'pagamento vinculado à fatura');
 assert.equal(d.tx.filter(t => t.origin === 'import').length, 10);
-const fst = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); return c.faturas(s).map(f => f.status); });
-assert.deepEqual(fst, ['liq'], 'fatura paga pelo pagamento do extrato');
+const fst = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); return c.faturas(s).map(f => [f.comp, f.status]); });
+assert.deepEqual(fst[0], ['2026-03', 'liq'], 'fatura paga pelo pagamento do extrato');
+// a compra parcelada 02/10 da fatura gerou as parcelas 3 a 10 como previstas nas faturas seguintes (pendentes)
+assert.equal(d.tx.filter(t => t.prev && t.parcKey).length, 8); assert.equal(fst.length, 9); assert(fst.slice(1).every(f => f[1] === 'pend'));
 // importar o mesmo extrato de novo: nada novo
 const [fc3] = await Promise.all([p.waitForEvent('filechooser'), p.click('#imp')]);
 await fc3.setFiles(FX + 'extrato-ficticio.csv'); await p.waitForSelector('#r-go');

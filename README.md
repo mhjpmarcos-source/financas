@@ -7,7 +7,14 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.7.0.** Novidades:
+**Versão atual: 0.8.0.** Novidades:
+- **0.8.0:** em Agenda › Fixas e parcelas:
+  - **Despesas fixas:** todo mês, sem data para acabar, até você encerrar.
+  - **Despesas variáveis:** luz, água etc.; o valor previsto é a média dos 3 últimos meses pagos.
+  - **Contas que se repetem encontradas no histórico,** que você pode cadastrar com um toque.
+  - **Parcelados até 36x,** no cartão ou na conta.
+  - **Ao importar uma fatura,** as parcelas futuras das compras parceladas entram como previstas nas faturas seguintes e são trocadas pelas reais quando a próxima fatura chega, sem duplicar.
+  - **Pessoas com chave Pix:** as parcelas que você deve ganham um botão que gera o código **Pix Copia e Cola** com o valor, para colar no app do banco.
 - **0.7.0 (segurança e cópias):**
   - O app faz uma **cópia automática por dia no seu Drive**, na subpasta "Cópias de segurança". Ficam as dos últimos 14 dias e uma por mês do último ano.
   - Antes de restaurar ou de uma exclusão muito grande, ele guarda uma cópia extra.

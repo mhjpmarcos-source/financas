@@ -1,4 +1,5 @@
 /* Cálculos: competência de cartão, faturas e saldos. Adaptados do sistema antigo. */
+import * as M from './model.js';
 const pad = n => String(n).padStart(2, '0');
 export const mOf = d => d.slice(0, 7);
 export function mAdd(m, n) { let [y, mo] = m.split('-').map(Number); mo += n; y += Math.floor((mo - 1) / 12); mo = ((mo - 1) % 12 + 12) % 12 + 1; return y + '-' + pad(mo); }
@@ -187,6 +188,66 @@ export function faturaCandidates(S, { accountId, cardId, date, amount }) {
     .map(f => ({ ...f, exact: amount != null && Math.abs(f.rest - amount) < 0.01, dist: date ? days(f.date, date) : 0 }))
     .filter(f => !date || f.dist <= 75)
     .sort((a, b) => (b.exact - a.exact) || (a.dist - b.dist));
+}
+
+/* ---------- contas que se repetem ---------- */
+/* estatística dos meses já confirmados (não previstos) de uma regra */
+export function recStats(S, r) {
+  const real = S.tx.filter(t => t.recId === r.id && !t.prev && (t.type === 'cred' || t.status === 'liq')).sort((a, b) => a.recM < b.recM ? -1 : 1).slice(-6);
+  const v = real.map(t => Math.abs(t.amount));
+  if (!v.length) return { n: 0 };
+  const last3 = v.slice(-3);
+  return { n: v.length, last: v[v.length - 1], avg3: r2(last3.reduce((s, x) => s + x, 0) / last3.length), min: Math.min(...v), max: Math.max(...v), lastM: real[real.length - 1].recM };
+}
+/* procura no histórico despesas (e receitas) que aparecem quase todo mês e ainda não estão cadastradas como fixas.
+   Olha os 6 meses completos anteriores: precisa aparecer em pelo menos 3 deles (um dos 2 últimos), no máximo ~1 vez por mês.
+   Valor igual todo mês → fixa; valor que varia (até ~60%) → variável. */
+export function detectRecurring(S, today = M.todayISO()) {
+  const cur = today.slice(0, 7), months = Array.from({ length: 6 }, (_, i) => mAdd(cur, -6 + i));
+  const ign = new Set((S.config && S.config.recIgnore) || []);
+  const groups = new Map();
+  S.tx.forEach(t => {
+    if (!['deb', 'cred', 'rec'].includes(t.type) || t.cardPay || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.amount <= 0) return;
+    if (t.type !== 'cred' && t.status !== 'liq') return;
+    const m = t.type === 'cred' ? txComp(S, t) : t.date.slice(0, 7);
+    if (!months.includes(m)) return;
+    const words = M.normDesc(t.desc.replace(/\(\d+\/\d+\)/, '')).split(' ').filter(w => w.length > 1 && !/^\d+$/.test(w)).slice(0, 3).join(' ');
+    const key = (t.type === 'rec' ? 'in' : 'out') + '|' + (words || 'cat:' + t.itemId);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ t, m });
+  });
+  const out = [];
+  groups.forEach((list, key) => {
+    if (ign.has(key)) return;
+    const per = {}; list.forEach(({ t, m }) => { per[m] = (per[m] || 0) + t.amount; });
+    const ms = Object.keys(per).sort();
+    if (ms.length < 3 || list.length > ms.length * 1.35 || !ms.some(m => m >= months[4])) return;
+    const v = ms.map(m => r2(per[m])), avg = v.reduce((s, x) => s + x, 0) / v.length, mn = Math.min(...v), mx = Math.max(...v);
+    const fixa = mx - mn <= Math.max(0.01, avg * 0.01);
+    if (!fixa && (mx - mn) / avg > 0.6) return;
+    const last = list.slice().sort((a, b) => a.t.date < b.t.date ? 1 : -1)[0].t;
+    const cnt = {}; list.forEach(({ t }) => { if (t.itemId) cnt[t.itemId] = (cnt[t.itemId] || 0) + 1; });
+    const itemId = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || last.itemId;
+    const daysL = list.map(({ t }) => +t.date.slice(8, 10)).sort((a, b) => a - b);
+    const last3 = v.slice(-3);
+    out.push({ key, kind: fixa ? 'fixa' : 'var', type: last.type, desc: last.desc.replace(/\s*\(\d+\/\d+\)\s*$/, ''), itemId, accountId: last.accountId,
+      amount: fixa ? v[v.length - 1] : r2(last3.reduce((s, x) => s + x, 0) / last3.length), min: mn, max: mx, n: ms.length, day: daysL[Math.floor(daysL.length / 2)],
+      lastM: ms[ms.length - 1], txIds: list.map(({ t }) => t.id) });
+  });
+  return out.sort((a, b) => b.amount - a.amount);
+}
+/* compras parceladas: quanto falta e até quando (previstas + em aberto) */
+export function parcelSummary(S, today = M.todayISO()) {
+  return M.parcelPlans(S).map(list => {
+    list.sort((a, b) => (a.parcI || a.seriesIdx) - (b.parcI || b.seriesIdx));
+    const first = list[0], n = first.parcN || first.seriesN, acc = S.accounts.find(a => a.id === first.accountId);
+    const isCard = first.type === 'cred';
+    const card = isCard ? acc : null, curComp = card ? cardCycle(card, today).comp : null;
+    const open = list.filter(t => isCard ? txComp(S, t) >= curComp : t.status === 'pend');
+    const lastT = list[list.length - 1];
+    return { desc: first.desc.replace(/\s*\(\d+\/\d+\)\s*$/, ''), accountId: first.accountId, isCard, n, have: list.length, open: open.length, rest: r2(open.reduce((s, t) => s + t.amount, 0)),
+      parcel: open[0] ? open[0].amount : lastT.amount, until: isCard ? txComp(S, lastT) : lastT.date.slice(0, 7), prev: list.filter(t => t.prev).length, firstId: first.id };
+  }).filter(p => p.open > 0).sort((a, b) => a.until < b.until ? -1 : 1);
 }
 
 /* ---------- orçamento ---------- */

@@ -156,3 +156,62 @@ console.log('model tests OK');
   assert.equal(M.recordCount(M.emptyState()), 0);
   console.log('cópias tests OK');
 }
+
+// fixas, variáveis, parcelas previstas e Pix
+{
+  const IP = await import('../js/imp/plan.js');
+  const PX = await import('../js/pix.js');
+  const base = () => { const s = M.emptyState(); s.accounts.push({ id: 'cc', name: 'Conta', nature: 'debito', initial: 0 }, { id: 'k', name: 'Cartão', nature: 'credito', closeDay: 25, dueDay: 10 }); s.items.push({ id: 'luz', name: 'Energia', groupId: 'g' }, { id: 'net', name: 'Internet', groupId: 'g' }); s.groups.push({ id: 'g', name: 'Casa', kind: 'despesa' }); return s; };
+  // fixa sem fim: 12 meses à frente, ids fixos (dois aparelhos geram o mesmo)
+  const s = base(); const r = M.newRec({ kind: 'fixa', type: 'deb', desc: 'Internet', itemId: 'net', accountId: 'cc', amount: 99.9, day: 31, start: '2026-11' });
+  s.rec.push(r); M.recFirst(s, r, { date: '2026-11-10', amount: 99.9, status: 'liq' });
+  assert.equal(M.ensureRecurring(s, '2026-11-17'), 12);
+  const occ = M.recOccs(s, r); assert.equal(occ.length, 13); assert.equal(occ[1].date, '2026-12-31'); assert.equal(occ[3].date, '2027-02-28', 'dia 31 em fevereiro');
+  assert.equal(M.ensureRecurring(s, '2026-11-17'), 0, 'não duplica');
+  const s2 = JSON.parse(JSON.stringify(s)); s2.tx = s2.tx.filter(t => !t.prev); M.ensureRecurring(s2, '2026-11-17');
+  assert.equal(M.merge(s, s2).tx.filter(t => t.recId === r.id).length, 13, 'mesmo id nos dois aparelhos');
+  // excluir um mês: não volta
+  M.removeRecord(s, 'tx', M.recOccId(r, '2027-03')); M.ensureRecurring(s, '2026-11-17'); assert(!s.tx.some(t => t.recM === '2027-03'));
+  // mudar valor a partir de jan; encerrar em abr; reabrir
+  M.editRec(s, r, { amount: 109.9 }, '2027-01'); assert.equal(s.tx.find(t => t.recM === '2026-12').amount, 99.9); assert.equal(s.tx.find(t => t.recM === '2027-01').amount, 109.9);
+  M.endRec(s, r, '2027-04'); assert.equal(M.recOccs(s, r).filter(t => t.recM > '2027-04').length, 0); M.ensureRecurring(s, '2026-11-17'); assert.equal(M.recOccs(s, r).filter(t => t.recM > '2027-04').length, 0);
+  M.reopenRec(s, r); M.ensureRecurring(s, '2026-11-17'); assert.equal(M.recOccs(s, r).filter(t => t.recM > '2027-04').length, 7);
+  // variável: previsão = média dos 3 últimos confirmados
+  const v = base(); const rv = M.newRec({ kind: 'var', type: 'deb', desc: 'Conta de luz', itemId: 'luz', accountId: 'cc', amount: 150, day: 15, start: '2026-08' }); v.rec.push(rv);
+  M.ensureRecurring(v, '2026-11-17');
+  [['2026-08', 120], ['2026-09', 180], ['2026-10', 210]].forEach(([m, a]) => { const t = v.tx.find(x => x.recM === m); t.amount = a; t.status = 'liq'; delete t.prev; });
+  M.ensureRecurring(v, '2026-11-17'); assert.equal(v.tx.find(x => x.recM === '2026-12').amount, 170);
+  assert.deepEqual([C.recStats(v, rv).avg3, C.recStats(v, rv).min, C.recStats(v, rv).max], [170, 120, 210]);
+  // importação de extrato confirma o mês previsto da conta de luz (valor diferente), sem duplicar
+  const ext = { kind: 'extrato', lines: [{ date: '2026-11-16', desc: 'PAGTO ENERGIA ELETRICA', title: 'Pagamento conta', amount: 163.42, dir: 'out', role: 'normal' }] };
+  let plan = IP.buildPlan(v, ext, { accountId: 'cc' }); assert.equal(plan.rows[0].status, 'prev', 'acha pela categoria');
+  IP.applyPlan(v, plan); const nov = v.tx.find(x => x.recM === '2026-11'); assert.equal(nov.amount, 163.42); assert.equal(nov.status, 'liq'); assert(!nov.prev);
+  assert.equal(v.tx.filter(x => x.date === '2026-11-16').length, 1);
+  // parcelas: fatura de nov com 3/10 cria 4..10 previstas; fatura de dez com 4/10 ocupa a prevista
+  const p = base();
+  const fat = (comp, i) => ({ kind: 'fatura', lines: [{ date: '2026-08-20', desc: 'LOJA EXEMPLO', title: 'LOJA EXEMPLO 0' + i + '/10', amount: 85.5, dir: 'out', parc: { i, n: 10 }, role: 'normal' }] });
+  plan = IP.buildPlan(p, fat('2026-11', 3), { accountId: 'k', comp: '2026-11' }); assert.equal(plan.projN, 7);
+  IP.applyPlan(p, plan); assert.equal(p.tx.length, 8); assert.equal(p.tx.filter(t => t.prev).length, 7);
+  assert.equal(p.tx.find(t => t.parcI === 10).comp, '2027-06');
+  plan = IP.buildPlan(p, fat('2026-12', 4), { accountId: 'k', comp: '2026-12' }); assert.equal(plan.rows[0].status, 'prev'); assert.equal(plan.projN, 0);
+  IP.applyPlan(p, plan); assert.equal(p.tx.length, 8, 'não duplica'); assert.equal(p.tx.filter(t => t.prev).length, 6);
+  plan = IP.buildPlan(p, fat('2026-11', 3), { accountId: 'k', comp: '2026-11' }); assert.equal(plan.rows[0].status, 'already');
+  const ps = C.parcelSummary(p, '2026-11-17'); assert.equal(ps.length, 1); assert.equal(ps[0].until, '2027-06');
+  // parcelado fora do cartão: valor total dividido, datas mês a mês
+  const ser = M.makeSeries({ type: 'deb', amount: 1000, date: '2026-11-05', accountId: 'cc', itemId: 'net', kind: 'parc' }, 3);
+  assert.deepEqual(ser.map(t => t.amount).reduce((a, b) => a + b, 0).toFixed(2), '1000.00'); assert.equal(ser[2].date, '2027-01-05');
+  // detecção no histórico
+  const h = base();
+  [['2026-05-10', 99.9], ['2026-06-10', 99.9], ['2026-07-10', 99.9], ['2026-08-10', 99.9], ['2026-09-10', 99.9], ['2026-10-10', 99.9]].forEach(([d, a]) => h.tx.push(M.newTx({ type: 'deb', date: d, accountId: 'cc', itemId: 'net', amount: a, desc: 'NET SERVICOS ' + d.slice(5, 7) })));
+  [['2026-06-15', 140], ['2026-08-15', 180], ['2026-09-15', 160], ['2026-10-15', 175]].forEach(([d, a]) => h.tx.push(M.newTx({ type: 'deb', date: d, accountId: 'cc', itemId: 'luz', amount: a, desc: 'Conta de luz' })));
+  for (let i = 0; i < 12; i++) h.tx.push(M.newTx({ type: 'deb', date: '2026-09-' + String(i + 1).padStart(2, '0'), accountId: 'cc', itemId: 'net', amount: 30, desc: 'Padaria' }));
+  const det = C.detectRecurring(h, '2026-11-17');
+  assert.deepEqual(det.map(d => [d.desc.slice(0, 12), d.kind]), [['Conta de luz', 'var'], ['NET SERVICOS', 'fixa']]);
+  assert.equal(det[0].amount, 171.67); assert.equal(det[1].n, 6);
+  // Pix
+  assert.equal(PX.crc16('00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-4266554400005204000053039865802BR5913Fulano de Tal6008BRASILIA62070503***6304'), '1D3D');
+  const code = PX.payload({ key: PX.normalizeKey('fulano@exemplo.com').key, name: 'José da Silva', city: 'Brasília', amount: 150.5 });
+  assert.match(code, /54061\d?50\.50/); assert.match(code, /5913JOSE DA SILVA/); assert.equal(code.slice(-4), PX.crc16(code.slice(0, -4)));
+  assert.equal(PX.normalizeKey('(61) 98888-7777').key, '+5561988887777'); assert.equal(PX.normalizeKey('abc'), null);
+  console.log('fixas/parcelas/pix tests OK');
+}

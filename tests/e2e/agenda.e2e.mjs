@@ -19,7 +19,7 @@ await p.click('#l-save'); await wait(600);
 await p.click('[data-newloan=out]'); await p.fill('#l-person', 'Outra Pessoa'); await p.fill('#l-total', '400'); await p.fill('#l-n', '2'); await p.fill('#l-first', addDays(today, 10)); await p.click('#l-save'); await wait(600);
 await p.screenshot({ path: SHOTS + '/ag-loans.png' });
 // receita recorrente: 3 meses, futuras pendentes
-await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.click('[data-type=rec]'); await p.fill('#f-val', '2500'); await p.fill('#f-date', today); await p.selectOption('#f-item', { label: 'Salário' }); await p.check('#f-rep'); await p.fill('#f-n', '3'); await p.click('#f-save'); await wait(500);
+await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.click('[data-type=rec]'); await p.fill('#f-val', '2500'); await p.fill('#f-date', today); await p.selectOption('#f-item', { label: 'Salário' }); await p.selectOption('#f-freq', 'rep'); await p.selectOption('#f-n', '3'); await p.click('#f-save'); await wait(500);
 let st = await p.evaluate(async () => (await import('./js/sync.js')).state());
 assert.deepEqual(st.tx.filter(t => t.amount === 2500).map(t => t.status), ['liq', 'pend', 'pend']);
 // agenda
