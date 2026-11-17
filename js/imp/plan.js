@@ -29,7 +29,20 @@ export function buildPlan(S, st, { accountId, comp }) {
     seen[base] = (seen[base] || 0) + 1;
     const impKey = hash(base + '#' + seen[base]);
     row.tx = { type, date: l.date, accountId, amount: signed, desc: l.desc + (l.parc ? ` (${l.parc.i}/${l.parc.n})` : ''), rawDesc: l.title && l.title !== l.desc ? (l.title + ' ' + (l.detail || '')).trim() : '', impKey, comp: isCard ? comp : undefined, doc: l.doc || undefined, cardRef: l.cardRef || undefined };
-    if (existingKeys.has(impKey)) { row.status = 'already'; row.reason = 'Já importado antes'; return row; }
+    const parcInfo = () => {
+      let key = M.parcKey(accountId, l.desc, l.date, l.parc.n);
+      usedParc[key] = (usedParc[key] || 0) + 1; if (usedParc[key] > 1) key += '-' + usedParc[key];
+      Object.assign(row, { parcKey: key, parcI: l.parc.i, parcN: l.parc.n, cleanDesc: l.desc });
+      for (let k = l.parc.i + 1; k <= l.parc.n; k++) { const id = M.parcId(key, k); if (!byId.has(id) && !S.deleted[id]) row.projN = (row.projN || 0) + 1; }
+      projN += row.projN || 0;
+      return key;
+    };
+    if (existingKeys.has(impKey)) {
+      row.status = 'already'; row.reason = 'Já importado antes';
+      // importada antes da versão 0.8: a compra parcelada ganha agora as parcelas futuras previstas
+      if (isCard && l.parc && l.dir !== 'in') { parcInfo(); row.base = S.tx.find(t => t.impKey === impKey); }
+      return row;
+    }
     if (l.role === 'cardpay') {
       // o dinheiro saiu da conta, mas não é despesa nova (as compras estão no cartão): vira "pagamento de fatura"
       row.status = 'cardpay'; row.reason = 'Pagamento de fatura: tira o dinheiro da conta, mas não conta como despesa (as compras já estão no cartão).';
@@ -44,19 +57,15 @@ export function buildPlan(S, st, { accountId, comp }) {
     const c = classify({ ...l, kindHint: isCard && l.dir === 'in' ? 'estorno' : '' });
     // compra parcelada na fatura: id da parcela fixo (cartão + compra + nº de parcelas), para a próxima fatura achar a mesma
     if (isCard && l.parc && l.dir !== 'in') {
-      let key = M.parcKey(accountId, l.desc, l.date, l.parc.n);
-      usedParc[key] = (usedParc[key] || 0) + 1; if (usedParc[key] > 1) key += '-' + usedParc[key];
-      Object.assign(row, { parcKey: key, parcI: l.parc.i, parcN: l.parc.n, cleanDesc: l.desc });
+      const key = parcInfo();
       const same = byId.get(M.parcId(key, l.parc.i));
-      if (same && !same.prev) { row.status = 'already'; row.reason = 'Esta parcela já está lançada'; return row; }
-      for (let k = l.parc.i + 1; k <= l.parc.n; k++) { const id = M.parcId(key, k); if (!byId.has(id) && !S.deleted[id]) { row.projN = (row.projN || 0) + 1; } }
-      projN += row.projN || 0;
+      if (same && !same.prev) { row.status = 'already'; row.reason = 'Esta parcela já está lançada'; row.base = same; return row; }
       if (same) return prevRow(row, same, 'Parcela que estava prevista');
     }
     const prev = findPrev(S, row.tx, l, isCard, used, c.itemId);
     if (prev) return prevRow(row, prev, prev.recId ? 'Confirma o valor previsto da conta que se repete' : 'Parcela que estava prevista');
     const dup = findManual(S, row.tx, used, isCard);
-    if (dup) { used.add(dup.id); row.status = 'dup'; row.match = dup; row.reason = 'Parece já lançado'; return row; }
+    if (dup) { used.add(dup.id); row.status = 'dup'; row.match = dup; row.reason = 'Parece já lançado'; if (row.parcKey) row.base = dup; return row; }
     row.itemId = c.itemId; row.how = c.how; row.key = c.key;
     row.status = 'new'; row.include = true;
     return row;
@@ -120,6 +129,15 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
   let created = 0, learned = 0, paid = 0;
   if (!S.rules) S.rules = {};
   plan.rows.forEach(r => {
+    // parcela que já estava no app (importada antes ou lançada à mão): só lança as próximas como previstas
+    if (plan.project && r.parcKey && r.base && !(r.include && r.status === 'dup')) {
+      const x = S.tx.find(y => y.id === r.base.id);
+      if (x) {
+        if (!x.parcKey) { Object.assign(x, { parcKey: r.parcKey, parcI: r.parcI, parcN: r.parcN }); M.touch(x); }
+        M.projectParcels(S, { ...x, comp: x.comp || plan.comp }, r.parcKey, r.parcI, r.parcN, r.cleanDesc);
+      }
+      if (r.status === 'already') return;
+    }
     if (r.status === 'cardpay' && r.include) { r.tx.faturaKey = r.fatura ? r.fatura.key : ''; if (r.fatura) paid++; }
     if (!r.include || !r.tx) return;
     if (r.status === 'prev') {

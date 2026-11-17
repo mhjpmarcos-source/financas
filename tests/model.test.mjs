@@ -215,3 +215,29 @@ console.log('model tests OK');
   assert.equal(PX.normalizeKey('(61) 98888-7777').key, '+5561988887777'); assert.equal(PX.normalizeKey('abc'), null);
   console.log('fixas/parcelas/pix tests OK');
 }
+
+// planilha de parcelamentos e reimportação de fatura antiga
+{
+  const IP = await import('../js/imp/plan.js'); const PP = await import('../js/imp/parcelas.js');
+  const base = () => { const s = M.emptyState(); s.accounts.push({ id: 'k', name: "Cartão Exemplo", nature: 'credito', closeDay: 25, dueDay: 10 }); return s; };
+  const rows = [{ card: 'Cartão X', comp: '2026-11', date: '2026-09-10', desc: 'LOJA A', i: 2, n: 6, amount: 21.49 }, { card: 'Cartão X', comp: '2026-11', date: '2026-05-09', desc: 'LOJA B', i: 6, n: 8, amount: 7.09 }, { card: 'Cartão X', comp: '2026-11', date: '2026-05-09', desc: 'LOJA B', i: 6, n: 8, amount: 7.09 }];
+  const txt = PP.toCsv(rows); assert(PP.isParcelFile(txt)); const back = PP.parse(txt); assert.equal(back.rows.length, 3); assert.deepEqual(back.rows[0], rows[0]);
+  assert.equal(PP.parse(txt + 'x;2026-1;;;;;\r\n').errors.length, 1);
+  const s = base(); let r = PP.apply(s, back.rows, { 'Cartão X': 'k' });
+  assert.equal(r.created, 4 + 2 + 2); assert.equal(s.tx.filter(t => t.desc.startsWith('LOJA B')).length, 4, 'compras iguais não se fundem');
+  assert.equal(s.tx.find(t => t.parcI === 6 && t.desc.startsWith('LOJA A')).comp, '2027-03');
+  assert.equal(PP.apply(s, back.rows, { 'Cartão X': 'k' }).created, 0, 'aplicar de novo não duplica');
+  const s2 = base(); assert.equal(PP.apply(s2, back.rows, { 'Cartão X': 'k' }, { k: '2027-01' }).created, 3 + 1 + 1, 'a partir de jan/27');
+  // a fatura real de dez substitui as previstas (mesmo id)
+  const fat = { kind: 'fatura', lines: [{ date: '2026-09-10', desc: 'LOJA A', title: 'LOJA A 03/06', amount: 21.49, dir: 'out', parc: { i: 3, n: 6 }, role: 'normal' }, { date: '2026-05-09', desc: 'LOJA B', title: 'LOJA B 07/08', amount: 7.09, dir: 'out', parc: { i: 7, n: 8 }, role: 'normal' }, { date: '2026-05-09', desc: 'LOJA B', title: 'LOJA B 07/08', amount: 7.09, dir: 'out', parc: { i: 7, n: 8 }, role: 'normal' }] };
+  const plan = IP.buildPlan(s, fat, { accountId: 'k', comp: '2026-12' }); assert.deepEqual(plan.rows.map(x => x.status), ['prev', 'prev', 'prev']);
+  const n0 = s.tx.length; IP.applyPlan(s, plan); assert.equal(s.tx.length, n0, 'nada duplicado'); assert.equal(s.tx.filter(t => t.prev).length, 8 - 3);
+  // fatura importada antes da 0.8 (sem parcelas futuras): reimportar lança as previstas
+  const o = base(); const f1 = { kind: 'fatura', lines: [{ date: '2026-09-15', desc: 'AIRBNB', title: 'AIRBNB 2/6', amount: 299.23, dir: 'out', parc: { i: 2, n: 6 }, role: 'normal' }] };
+  let pl = IP.buildPlan(o, f1, { accountId: 'k', comp: '2026-11' }); pl.project = false; IP.applyPlan(o, pl); assert.equal(o.tx.length, 1);
+  o.tx[0].id = 'antigo'; delete o.tx[0].parcKey;
+  pl = IP.buildPlan(o, f1, { accountId: 'k', comp: '2026-11' }); assert.equal(pl.rows[0].status, 'already'); assert.equal(pl.projN, 4);
+  IP.applyPlan(o, pl); assert.equal(o.tx.length, 5); assert.equal(o.tx.find(t => t.id === 'antigo').parcKey, pl.rows[0].parcKey);
+  assert.equal(IP.buildPlan(o, f1, { accountId: 'k', comp: '2026-11' }).projN, 0);
+  console.log('planilha de parcelas tests OK');
+}

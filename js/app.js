@@ -9,8 +9,9 @@ import * as C from './calc.js';
 import * as PT from './imp/pdftext.js';
 import * as P from './imp/parse.js';
 import * as IP from './imp/plan.js';
+import * as PP from './imp/parcelas.js';
 
-export const VERSION = '0.8.1';
+export const VERSION = '0.8.2';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -630,6 +631,10 @@ function pickImportFile(preset) {
 async function importFlow(file, preset = {}) {
   const ov = busyOverlay('Lendo ' + file.name + '…');
   try {
+    if (/\.(csv|txt)$/i.test(file.name) || /csv|text/.test(file.type)) {
+      const txt = new TextDecoder('utf-8').decode(new Uint8Array(await file.arrayBuffer()));
+      if (PP.isParcelFile(txt)) { ov.close(); return parcelSheet(txt, file.name); }
+    }
     const st = await readStatement(file);
     ov.close();
     if (!st.lines.length) return toast('Não encontrei lançamentos neste arquivo. Se for de outro banco, me envie um exemplo para eu ensinar o app a ler.', true);
@@ -708,7 +713,7 @@ function reviewSheet(stRaw, fileName, preset) {
         ${plan && !isCard && st.saldoIni != null && st.saldoIniDate && !(acc.initialDate === st.saldoIniDate && C.r2(acc.initial) === C.r2(st.saldoIni)) ? `<label class="check"><input type="checkbox" id="r-ini" ${plan.setInitial ? 'checked' : ''}> Usar o saldo anterior do extrato como saldo inicial da conta: <b>${C.brl(st.saldoIni)}</b> em ${C.fmtD(st.saldoIniDate)}/${st.saldoIniDate.slice(0, 4)}${acc.initialDate ? ` (hoje: ${C.brl(acc.initial)} em ${C.fmtD(acc.initialDate)})` : ` (hoje: ${C.brl(acc.initial)}, sem data)`}</label>` : ''}
         ${plan ? `<div class="seg small" id="r-filter">${[['new', 'Novos'], ['dup', 'Duplicatas'], ['ignored', 'Outros'], ['all', 'Todos']].map(([k, l]) => `<button data-f="${k}" aria-pressed="${filter === k}">${l} ${k === 'all' ? plan.rows.length : k === 'ignored' ? count('ignored') + count('already') : count(k)}</button>`).join('')}</div>
         <ul class="list irows">${rowsHTML || '<li class="empty">Nada aqui.</li>'}</ul>` : ''}
-        <div class="actions sticky"><button class="btn" id="r-cancel">Cancelar</button><button class="btn primary" id="r-go" ${sel.length || (plan && (plan.rows.some(r => r.status === 'cardpay' && r.include) || plan.alreadyPaid || plan.setInitial)) ? '' : 'disabled'}>${sel.length ? goLabel : 'Aplicar'}</button></div>
+        <div class="actions sticky"><button class="btn" id="r-cancel">Cancelar</button><button class="btn primary" id="r-go" ${sel.length || (plan && (plan.rows.some(r => r.status === 'cardpay' && r.include) || plan.alreadyPaid || plan.setInitial || (plan.project && plan.projN))) ? '' : 'disabled'}>${sel.length ? goLabel : plan && plan.project && plan.projN ? `Lançar ${plan.projN} parcelas previstas` : 'Aplicar'}</button></div>
         ${!isCard && sel.length ? `<p class="hint center">Entradas ${C.brl(inSum)} · saídas ${C.brl(outSum)}</p>` : ''}
         ${noCat ? `<p class="hint center">${noCat} sem categoria: dá para escolher agora ou depois.</p>` : ''}`;
     };
@@ -719,7 +724,7 @@ function reviewSheet(stRaw, fileName, preset) {
       if (e.target.dataset.inc) { const r = plan.rows[+e.target.dataset.inc]; r.include = e.target.checked; return draw(); }
       if (e.target.dataset.fat) { IP.setRowFatura(plan.rows[+e.target.dataset.fat], e.target.value); return draw(); }
       if (e.target.id === 'r-paid') { plan.alreadyPaid = e.target.checked; return; }
-      if (e.target.id === 'r-proj') { plan.project = e.target.checked; return; }
+      if (e.target.id === 'r-proj') { plan.project = e.target.checked; return draw(); }
       if (e.target.id === 'r-ini') { plan.setInitial = e.target.checked ? { value: st.saldoIni, date: st.saldoIniDate } : null; return draw(); }
       if (e.target.dataset.cat) {
         const r = plan.rows[+e.target.dataset.cat];
@@ -733,13 +738,14 @@ function reviewSheet(stRaw, fileName, preset) {
       if (e.target.id === 'r-cancel') return closeSheet();
       if (e.target.id === 'r-go') {
         let res = null;
-        const months = {};
+        const months = {}, prev0 = S().tx.filter(t => t.prev && t.parcKey).length;
         plan.rows.filter(r => r.include && r.tx).forEach(r => { const m = r.tx.comp || r.tx.date.slice(0, 7); months[m] = (months[m] || 0) + 1; });
         await sync.commit(s => { res = IP.applyPlan(s, plan); });
         const top = Object.entries(months).sort((a, b) => b[1] - a[1])[0];
         if (top) ui.month = top[0];
         closeSheet(); ui.tab = 'lanc'; ui.q = ''; render();
-        toast(`${res.created} lançamento(s) importado(s)${res.paid ? ` · ${res.paid} fatura(s) marcada(s) como paga(s)` : ''}.`);
+        const proj = S().tx.filter(t => t.prev && t.parcKey).length - prev0;
+        toast(`${res.created} lançamento(s) importado(s)${proj > 0 ? ` · ${proj} parcela(s) futura(s) prevista(s)` : ''}${res.paid ? ` · ${res.paid} fatura(s) marcada(s) como paga(s)` : ''}.`);
       }
     };
   });
@@ -1526,6 +1532,59 @@ function pixSheet(person, amount, txId) {
     if (txId) panel.querySelector('#px-paid').onclick = async () => {
       await sync.commit(s => { const x = s.tx.find(y => y.id === txId); if (x) { x.status = 'liq'; x.date = M.todayISO(); x.amount = C.parseMoney(panel.querySelector('#px-val').value) || x.amount; delete x.prev; M.touch(x); } });
       closeSheet(); render(); toast('Marcado como pago.');
+    };
+  });
+}
+
+/* ----- planilha de parcelamentos: parcelas futuras como previstas ----- */
+function parcelSheet(text, fileName) {
+  let data;
+  try { data = PP.parse(text); } catch (e) { return toast(e.message, true); }
+  if (!data.rows.length) return toast('A planilha não tem linhas válidas.', true);
+  const st = S(), cards = st.accounts.filter(a => a.nature === 'credito' && a.active !== false);
+  const labels = [...new Set(data.rows.map(r => r.card))];
+  const guess = l => { const n = M.normDesc(l); const c = cards.find(a => M.normDesc(a.name) === n) || cards.find(a => { const x = M.normDesc(a.name); return x && (n.includes(x) || x.includes(n)); }); return c ? c.id : ''; };
+  const map = Object.fromEntries(labels.map(l => [l, guess(l)]));
+  // por padrão começa depois da última fatura que já tem lançamentos (evita repetir o que já está numa fatura lançada à mão)
+  const defFrom = (label, cardId) => {
+    const base = data.rows.filter(r => r.card === label).map(r => C.mAdd(r.comp, 1)).sort()[0];
+    const last = S().tx.filter(t => t.accountId === cardId && t.type === 'cred' && !t.prev).map(t => C.txComp(S(), t)).sort().pop();
+    return last && C.mAdd(last, 1) > base ? C.mAdd(last, 1) : base;
+  };
+  const from = {}; labels.forEach(l => { if (map[l]) from[l] = defFrom(l, map[l]); });
+  openSheet('', panel => {
+    panel.classList.add('wide');
+    const draw = () => {
+      let total = 0, count = 0;
+      const blocks = labels.map(l => {
+        const rows = data.rows.filter(r => r.card === l), cardId = map[l];
+        const items = rows.map(r => ({ r, p: cardId ? PP.pending(r, from[l]) : [] }));
+        const n = items.reduce((s, x) => s + x.p.length, 0), v = items.reduce((s, x) => s + x.p.length * x.r.amount, 0);
+        const skippedEarly = cardId ? rows.reduce((s, r) => s + (PP.pending(r).length - PP.pending(r, from[l]).length), 0) : 0;
+        total += v; count += n;
+        return `<div class="card inset"><div class="grid2"><div><label>Cartão "${esc(l)}" no app</label><select data-map="${esc(l)}"><option value="">Não lançar</option>${cards.map(c => `<option value="${c.id}" ${c.id === cardId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+          ${cardId ? `<div><label>A partir da fatura de</label><input type="month" data-from="${esc(l)}" value="${from[l] || ''}"></div>` : '<div></div>'}</div>
+          ${cardId ? `<p class="hint">${n} parcela(s), ${C.brl(v)}${skippedEarly ? ` · ${skippedEarly} de faturas anteriores a ${shortM(from[l])} ficam de fora` : ''}</p>` : !cards.length ? '<p class="warn">Cadastre o cartão em Contas antes.</p>' : '<p class="hint">Escolha o cartão para lançar estas parcelas.</p>'}
+          <ul class="list">${items.map(({ r, p }) => `<li><span class="t"><b>${esc(r.desc)}</b><small>${C.fmtD(r.date)}/${r.date.slice(2, 4)} · parcela ${r.i} de ${r.n} na fatura de ${shortM(r.comp)}${p.length ? ` · lança ${p.length}, até ${shortM(p[p.length - 1].comp)}` : ' · nada a lançar'}</small></span><span class="num">${C.brl(r.amount)}</span></li>`).join('')}</ul></div>`;
+      }).join('');
+      panel.innerHTML = `<h2>Parcelas a vencer</h2><p class="hint">${esc(fileName)}${data.errors.length ? ` · ${data.errors.length} linha(s) com problema ignorada(s) (linhas ${data.errors.slice(0, 5).join(', ')})` : ''}</p>
+        <p class="hint">As parcelas entram como <b>previstas</b> nas faturas dos próximos meses. Quando você importar a fatura real, cada parcela prevista é trocada pela real, sem duplicar.</p>
+        ${blocks}
+        <div class="actions sticky"><button class="btn" id="pp-c">Cancelar</button><button class="btn primary" id="pp-go" ${count ? '' : 'disabled'}>Lançar ${count} · ${C.brl(total)}</button></div>`;
+    };
+    draw();
+    panel.onchange = e => {
+      if (e.target.dataset.map !== undefined) { const l = e.target.dataset.map; map[l] = e.target.value; if (map[l]) from[l] = defFrom(l, map[l]); return draw(); }
+      if (e.target.dataset.from !== undefined) { from[e.target.dataset.from] = e.target.value; return draw(); }
+    };
+    panel.onclick = async e => {
+      if (e.target.id === 'pp-c') return closeSheet();
+      if (e.target.id !== 'pp-go') return;
+      const fromById = {}; labels.forEach(l => { if (map[l]) fromById[map[l]] = from[l]; });
+      let res = null;
+      await sync.commit(s => { res = PP.apply(s, data.rows, map, fromById); });
+      closeSheet(); ui.tab = 'agenda'; ui.agView = 'fix'; render();
+      toast(`${res.created} parcela(s) prevista(s) lançada(s)${res.skipped ? ` · ${res.skipped} já existiam` : ''}.`);
     };
   });
 }

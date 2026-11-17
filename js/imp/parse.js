@@ -120,8 +120,8 @@ function detectKind(text) {
 
 export function guessBank(text) {
   const t = norm(text);
-  const banks = [['Nubank', /NUBANK|NU PAGAMENTOS/], ['Itaú', /ITAU|ITAUCARD/], ['Bradesco', /BRADESCO/], ['Santander', /SANTANDER/], ['Caixa', /CAIXA ECONOMICA|CAIXA\b/],
-    ['Banco Inter', /BANCO INTER\b/], ['C6 Bank', /\bC6\b/], ['XP', /\bXP\b/], ['Sam\'s Club', /SAM'?S CLUB/], ['Banco do Brasil', /BANCO DO BRASIL|OUROCARD|\bBB\b|RENDE FACIL/], ['Mercado Pago', /MERCADO PAGO/], ['PicPay', /PICPAY/], ['BTG', /BTG/], ['Sicoob', /SICOOB/], ['Sicredi', /SICREDI/]];
+  const banks = [['Nubank', /NUBANK|NU PAGAMENTOS/], ['Itaú', /ITAU|ITAUCARD/], ['Bradesco', /BRADESCO/], ['Santander', /SANTANDER/], ['Mercado Pago', /MERCADO PAGO/], ['Caixa', /CAIXA ECONOMICA|\bCAIXA\b(?! ELETRONICO)/],
+    ['Banco Inter', /BANCO INTER\b/], ['C6 Bank', /\bC6\b/], ['XP', /\bXP\b/], ['Sam\'s Club', /SAM'?S CLUB/], ['Banco do Brasil', /BANCO DO BRASIL|OUROCARD|\bBB\b|RENDE FACIL/], ['PicPay', /PICPAY/], ['BTG', /BTG/], ['Sicoob', /SICOOB/], ['Sicredi', /SICREDI/]];
   // ignora linhas de Pix, TED e boletos (citam outros bancos como favorecidos)
   const own = t.split('\n').filter(l => !/PIX|TED\b|DOC\b|TRANSF|BOLETO|PAGTO|PAGAMENTO|NU PAGAMENTOS/.test(l)).join('\n');
   for (const [n, rx] of banks) if (rx.test(own)) return n;

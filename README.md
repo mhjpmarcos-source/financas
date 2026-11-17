@@ -7,7 +7,11 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.8.1.** Novidades:
+**Versão atual: 0.8.2.** Novidades:
+- **0.8.2:**
+  - **Planilha de parcelamentos:** importada pelo mesmo botão Importar, lança como previstas as parcelas que ainda vão vir de compras parceladas em andamento, cada uma na fatura do mês certo. O formato está descrito em `js/imp/parcelas.js`.
+  - **Reimportar uma fatura importada antes da versão 0.8** agora também lança as parcelas futuras.
+  - **Fatura do Mercado Pago** reconhecida pelo nome do banco.
 - **0.8.1:** ao abrir o app (ou voltar a ele) com o acesso ao Drive vencido (o Google dá 1 hora), o app renova sozinho passando rapidamente pelo Google e sincroniza, sem precisar tocar em "Reconectar". Só pede o toque se o Google exigir (ex.: saiu da conta Google naquele aparelho).
 - **0.8.0:** em Agenda › Fixas e parcelas:
   - **Despesas fixas:** todo mês, sem data para acabar, até você encerrar.
