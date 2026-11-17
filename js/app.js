@@ -2,13 +2,14 @@
 import * as auth from './auth.js';
 import * as sync from './sync.js';
 import * as drive from './drive.js';
+import * as lock from './lock.js';
 import * as M from './model.js';
 import * as C from './calc.js';
 import * as PT from './imp/pdftext.js';
 import * as P from './imp/parse.js';
 import * as IP from './imp/plan.js';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.7.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -50,16 +51,40 @@ function maskMoney(el, ev) {
 const isMoney = el => el && el.tagName === 'INPUT' && el.inputMode === 'decimal';
 document.addEventListener('focusin', e => { if (isMoney(e.target) && e.target.value) { const v = C.parseMoney(e.target.value); e.target.value = v ? moneyText(v) : ''; } });
 document.addEventListener('input', e => { if (isMoney(e.target)) maskMoney(e.target, e); });
+/* como calculadora: dígito entra sempre no fim e apagar tira sempre o último, onde quer que esteja o cursor */
+document.addEventListener('beforeinput', e => {
+  const el = e.target; if (!isMoney(el)) return;
+  if (el.selectionStart !== el.selectionEnd) return; /* com texto selecionado, vale o comportamento normal (substituir/apagar a seleção) */
+  const neg = el.value.startsWith('-'), d = el.value.replace(/\D/g, '').replace(/^0+/, '');
+  let nd;
+  if (e.inputType === 'insertText' && /^\d$/.test(e.data || '')) nd = d + e.data;
+  else if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') nd = d.slice(0, -1);
+  else return;
+  e.preventDefault();
+  el.value = (neg ? '-' : '') + nd;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
+/* botão ±: o teclado numérico do iPhone não tem sinal de menos */
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-pm]'); if (!b) return;
+  const el = b.parentElement.querySelector('input'); if (!el) return;
+  el.value = el.value.startsWith('-') ? el.value.slice(1) : '-' + el.value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
 async function boot() {
   const cid = clientId();
   if (cid) auth.init(cid);
   await sync.load();
+  await lock.load();
+  lock.onChange(lockScreen);
+  applyDiscreet();
   sync.onData(() => { if (S() && S().config.setupDone && !$('#wz')) render(); });
   sync.onStatus(renderChip);
   auth.onChange(() => { if (S() && S().config.setupDone) renderChip(sync.currentStatus()); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   route();
+  lockScreen();
   if (auth.isSignedIn()) sync.schedule(200);
 }
 
@@ -153,7 +178,7 @@ function drawWizard() {
   if (s === 1) body = `<h1>Contas</h1><p class="hint">Contas correntes, poupança, carteira. O saldo inicial é o saldo de hoje (pode ser zero).</p>
       ${wz.accounts.map((a, i) => `<div class="item-row" data-i="${i}">${wz.accounts.length > 1 ? `<button class="btn ghost x" data-wz="delacc" data-i="${i}" aria-label="Remover">✕</button>` : ''}
         <label>Nome</label><input data-f="acc.name" data-i="${i}" value="${esc(a.name)}" placeholder="Ex.: Conta do banco">
-        <label>Saldo inicial (R$)</label><input data-f="acc.initial" data-i="${i}" inputmode="decimal" value="${esc(a.initial)}" placeholder="0,00"></div>`).join('')}
+        <label>Saldo inicial (R$)</label><div class="pm"><input data-f="acc.initial" data-i="${i}" inputmode="decimal" value="${esc(a.initial)}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>`).join('')}
       <button class="link" data-wz="addacc">+ Adicionar outra conta</button>`;
   if (s === 2) body = `<h1>Cartões de crédito</h1><p class="hint">Os dias de fechamento e vencimento estão na fatura. Se não usa cartão, só avance.</p>
       ${wz.cards.map((c, i) => `<div class="item-row"><button class="btn ghost x" data-wz="delcard" data-i="${i}" aria-label="Remover">✕</button>
@@ -252,12 +277,13 @@ function render() {
   if (!S() || !S().config.setupDone) return route();
   const tabs = [['lanc', 'Lançamentos'], ['agenda', 'Agenda'], ['resumo', 'Resumo'], ['contas', 'Contas'], ['ajustes', 'Ajustes']];
   const title = ui.sub === 'cats' ? 'Categorias' : { lanc: 'Lançamentos', agenda: 'Agenda', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
-  app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="chip" id="chip"><i></i><span></span></button></header>
+  app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="eye" id="eye" aria-label="Esconder ou mostrar os valores"></button><button class="chip" id="chip"><i></i><span></span></button></header>
     <main class="page" id="page"></main>
     ${ui.tab === 'lanc' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ICON[k]}<span>${l}</span></button>`).join('')}</nav></div>`;
   app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.sub = null; ui.q = ''; render(); window.scrollTo(0, 0); } };
   $('#chip').onclick = chipAction;
+  $('#eye').onclick = toggleDiscreet; applyDiscreet();
   if ($('#back')) $('#back').onclick = () => { ui.sub = null; render(); };
   if ($('#fab')) $('#fab').onclick = () => txSheet();
   if (ui.sub === 'cats') pageCategorias();
@@ -410,7 +436,7 @@ function txSheet(tx, preset) {
     panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>${series}${origin}${loanInfo}
       <div class="seg" id="seg">${['deb', 'cred', 'rec', 'trf'].filter(k => k !== 'cred' || hasCards || type === 'cred').map(k => `<button type="button" data-type="${k}" aria-pressed="${k === type}" ${tx && tx.seriesId && k !== type ? 'disabled' : ''}>${TYPE[k]}</button>`).join('')}</div>
       ${!tx && hasCards ? '<button type="button" class="link" id="f-pgto">Pagar fatura de cartão →</button>' : ''}
-      <label for="f-val" id="f-vallbl">Valor (R$)</label><input id="f-val" inputmode="decimal" value="${tx ? moneyText(tx.amount) : ''}" placeholder="0,00">
+      <label for="f-val" id="f-vallbl">Valor (R$)</label><div class="pm"><input id="f-val" inputmode="decimal" value="${tx ? moneyText(tx.amount) : ''}" placeholder="0,00">${type === 'cred' ? '<button type="button" class="pmb" data-pm aria-label="Trocar sinal: negativo é estorno ou crédito no cartão">±</button>' : ''}</div>
       <label for="f-date">${type === 'cred' ? 'Data da compra' : 'Data'}</label><input id="f-date" type="date" value="${esc(defDate)}">
       <label for="f-desc">Descrição</label><input id="f-desc" value="${esc(tx ? tx.desc : '')}" placeholder="Opcional">
       ${type === 'trf' ? `<label>De</label><select id="f-acc">${optAccounts('debito', accSel)}</select><label>Para</label><select id="f-to">${optAccounts('debito', tx && tx.toAccountId)}</select>`
@@ -1027,7 +1053,7 @@ function pageContas() {
   let html = `<div class="cols"><div class="card"><h2>Saldo hoje</h2><div class="num" style="font-size:28px;font-weight:700">${C.brl(total)}</div>
     <p class="hint">Só o que já foi pago ou recebido.</p><ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
       <small>No fim do mês, com pendentes: ${C.brl(proj[a.id] || 0)}</small></span><span class="num ${bal[a.id] < 0 ? 'neg' : ''}">${C.brl(bal[a.id] || 0)}</span></li>`).join('')}</ul>
-    <button class="link" data-new="debito">+ Nova conta</button></div>`;
+    <button class="link" data-new="debito">+ Nova conta</button></div>${resCard(st, today, total)}`;
   html += `<div class="card"><h2>Cartões</h2>${cards.length ? '<p class="hint">Toque no cartão para ver as faturas.</p>' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
     const comp = C.cardCycle(c, today).comp, f = C.faturaOf(st, c.id, comp);
     return `<li data-card="${c.id}"><span class="t"><b>${esc(c.name)}</b><small>Fatura aberta: ${C.monthLabel(comp).toLowerCase()} · vence ${C.fmtD(f.date)}</small></span><span class="num">${C.brl(f.total)}</span></li>`;
@@ -1035,10 +1061,243 @@ function pageContas() {
   ${archived.length ? `<div class="card"><h2>Arquivadas</h2><ul class="list">${archived.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b><small>${a.nature === 'credito' ? 'Cartão' : 'Conta'} arquivado</small></span></li>`).join('')}</ul></div>` : ''}`;
   $('#page').innerHTML = html;
   $('#page').onclick = e => {
+    if (e.target.id === 'res-new') return resForm(null);
+    const rs = e.target.closest('[data-res]'); if (rs) return resSheet(rs.dataset.res);
     const n = e.target.closest('[data-new]'); if (n) return accSheet(null, n.dataset.new);
     const c = e.target.closest('[data-card]'); if (c) return faturaSheet(c.dataset.card);
     const li = e.target.closest('[data-acc]'); if (li) accSheet(accById(li.dataset.acc));
   };
+}
+
+/* ----- reservas ----- */
+function resCard(st, today, total) {
+  const R = C.reserves(st, today), act = R.list.filter(x => !x.r.done), done = R.list.filter(x => x.r.done);
+  const row = x => `<li data-res="${x.r.id}"><span class="t"><b>${esc(x.r.name)}</b>
+      ${x.r.target ? `<div class="bar"><i style="width:${Math.max(2, x.pct).toFixed(1)}%;background:${x.r.color}"></i></div>` : ''}
+      <small>${x.r.done ? 'Concluída' : x.r.target ? `${Math.round(x.pct)}% de ${C.brl(x.r.target)}${x.rest ? ` · faltam ${C.brl(x.rest)}` : ' · meta atingida ✓'}` : 'Sem meta de valor'}${!x.r.done && x.perMonth ? ` · guardar ${C.brl(x.perMonth)}/mês até ${C.fmtD(x.r.deadline)}/${x.r.deadline.slice(2, 4)}` : ''}${x.late ? ' · <span class="neg">prazo passou</span>' : ''}</small></span>
+      <span class="num">${C.brl(x.saved)}</span></li>`;
+  const livre = C.r2(total - R.total);
+  return `<div class="card"><h2>Reservas</h2>
+    ${act.length ? `<div class="kpis two"><div class="kpi"><small>Guardado</small><b class="num">${C.brl(R.total)}</b></div><div class="kpi"><small>Livre nas contas</small><b class="num ${livre < 0 ? 'neg' : ''}">${C.brl(livre)}</b></div></div>
+      ${livre < 0 ? '<p class="hint neg">As reservas somam mais do que o saldo das contas.</p>' : ''}` : '<p class="hint">Separe parte do saldo para objetivos (emergência, viagem, IPVA…). O dinheiro continua na conta; o app mostra quanto dele está comprometido e quanto está livre.</p>'}
+    <ul class="list wrap">${act.map(row).join('')}</ul>
+    ${done.length ? `<details><summary class="hint">Concluídas (${done.length})</summary><ul class="list wrap">${done.map(row).join('')}</ul></details>` : ''}
+    <button class="link" id="res-new">+ Nova reserva</button></div>`;
+}
+
+function resForm(r) {
+  openSheet('', panel => {
+    let color = r ? r.color : COLORS[8];
+    panel.innerHTML = `<h2>${r ? 'Editar reserva' : 'Nova reserva'}</h2>
+      <label for="rs-name">Nome</label><input id="rs-name" value="${r ? esc(r.name) : ''}" placeholder="Ex.: Reserva de emergência">
+      <div class="grid2"><div><label for="rs-target">Meta (R$, opcional)</label><input id="rs-target" inputmode="decimal" value="${r ? moneyText(r.target) : ''}" placeholder="0,00"></div>
+        <div><label for="rs-dl">Até quando (opcional)</label><input id="rs-dl" type="date" value="${r ? r.deadline : ''}"></div></div>
+      ${r ? '' : `<label for="rs-ini">Já tenho guardado (R$, opcional)</label><input id="rs-ini" inputmode="decimal" placeholder="0,00">`}
+      <label>Cor</label><div class="colors">${COLORS.map(c => `<button type="button" data-color="${c}" style="background:${c}" aria-pressed="${c === color}" aria-label="Cor"></button>`).join('')}</div>
+      ${r ? `<label class="check"><input type="checkbox" id="rs-done" ${r.done ? 'checked' : ''}> Reserva concluída (sai do total guardado)</label>` : ''}
+      <div class="actions">${r ? '<button class="btn danger" id="rs-del">Excluir</button>' : ''}<button class="btn" id="rs-cancel">Cancelar</button><button class="btn primary" id="rs-save">Salvar</button></div>`;
+    panel.querySelector('.colors').onclick = e => { const b = e.target.closest('[data-color]'); if (!b) return; color = b.dataset.color; panel.querySelectorAll('[data-color]').forEach(x => x.setAttribute('aria-pressed', x === b)); };
+    panel.querySelector('#rs-cancel').onclick = closeSheet;
+    if (r) panel.querySelector('#rs-del').onclick = async () => {
+      if (!await askChoice('Excluir reserva', `Excluir "${r.name}" e o histórico dela? O dinheiro das contas não muda.`, [{ label: 'Excluir', value: 'y', danger: true }])) return;
+      await sync.commit(s => M.removeRecord(s, 'res', r.id)); closeSheet(); render(); toast('Reserva excluída.');
+    };
+    panel.querySelector('#rs-save').onclick = async () => {
+      const name = panel.querySelector('#rs-name').value.trim();
+      if (!name) return toast('Dê um nome à reserva.', true);
+      const f = { name, target: C.parseMoney(panel.querySelector('#rs-target').value), deadline: panel.querySelector('#rs-dl').value, color };
+      if (f.target < 0) return toast('A meta não pode ser negativa.', true);
+      if (r) {
+        const done = panel.querySelector('#rs-done').checked;
+        await sync.commit(s => { const x = s.res.find(y => y.id === r.id); if (x) { Object.assign(x, f, { name: f.name, done }); M.touch(x); } });
+      } else {
+        const ini = C.parseMoney(panel.querySelector('#rs-ini').value);
+        await sync.commit(s => { const x = M.newReserve(f); if (ini) M.reserveMov(x, { v: ini, note: 'Valor inicial', ini: true }); s.res.push(x); });
+      }
+      closeSheet(); render(); toast('Reserva salva.');
+    };
+  });
+}
+
+function resSheet(id) {
+  openSheet('', panel => {
+    let mode = null;
+    const draw = () => {
+      const r = S().res.find(x => x.id === id); if (!r) return closeSheet();
+      const x = C.reserves(S(), M.todayISO()).list.find(y => y.r.id === id);
+      panel.innerHTML = `<h2>${esc(r.name)}</h2>
+        <div class="kpis two"><div class="kpi"><small>Guardado</small><b class="num">${C.brl(x.saved)}</b></div><div class="kpi"><small>${r.target ? 'Falta' : 'Meta'}</small><b class="num">${r.target ? C.brl(x.rest) : '—'}</b></div></div>
+        ${r.target ? `<div class="bar"><i style="width:${Math.max(2, x.pct).toFixed(1)}%;background:${r.color}"></i></div>` : ''}
+        <p class="hint">${x.perMonth ? `Para chegar a ${C.brl(r.target)} até ${C.fmtD(r.deadline)}/${r.deadline.slice(0, 4)}: guardar ${C.brl(x.perMonth)} por mês (${x.months} ${x.months === 1 ? 'mês' : 'meses'}). Neste mês: ${C.brl(x.thisMonth)}.` : x.late ? '<span class="neg">O prazo passou sem atingir a meta.</span> Edite a reserva para mudar a data.' : r.target && !x.rest ? 'Meta atingida. Marque como concluída quando usar o dinheiro.' : 'Guardar e retirar não movem dinheiro entre contas: só marcam quanto do saldo está separado.'}</p>
+        ${mode ? `<div class="card inset"><h3 class="sub">${mode > 0 ? 'Guardar' : 'Retirar'}</h3>
+          <div class="grid2"><div><label for="rm-v">Valor (R$)</label><input id="rm-v" inputmode="decimal" placeholder="0,00" value="${mode > 0 && x.perMonth ? moneyText(Math.max(0, x.perMonth - x.thisMonth)) : ''}"></div><div><label for="rm-d">Data</label><input id="rm-d" type="date" value="${M.todayISO()}"></div></div>
+          <label for="rm-n">Observação (opcional)</label><input id="rm-n" placeholder="${mode > 0 ? 'Ex.: sobra do mês' : 'Ex.: conserto do carro'}">
+          <div class="actions"><button class="btn" id="rm-cancel">Cancelar</button><button class="btn primary" id="rm-ok">${mode > 0 ? 'Guardar' : 'Retirar'}</button></div></div>`
+        : `<div class="actions wrap"><button class="btn" id="rs-edit">Editar</button><button class="btn" id="rs-out" ${x.saved > 0 ? '' : 'disabled'}>Retirar</button><button class="btn primary" id="rs-in">Guardar</button></div>`}
+        <h3 class="sub">Histórico</h3>${(r.movs || []).length ? `<ul class="list">${[...r.movs].reverse().map(m => `<li><span class="t"><b>${m.v > 0 ? 'Guardado' : 'Retirado'}</b><small>${C.fmtD(m.date)}/${m.date.slice(2, 4)}${m.note ? ' · ' + esc(m.note) : ''}</small></span><span class="num ${m.v < 0 ? 'neg' : 'pos'}">${C.brl(m.v)}</span><button class="link" data-delmov="${m.id}" aria-label="Apagar movimento">✕</button></li>`).join('')}</ul>` : '<p class="empty">Nada guardado ainda.</p>'}
+        <div class="actions"><button class="btn" id="rs-close">Fechar</button></div>`;
+    };
+    panel.onclick = async e => {
+      const t = e.target;
+      if (t.id === 'rs-close') return closeSheet();
+      if (t.id === 'rs-edit') { closeSheet(); return resForm(S().res.find(x => x.id === id)); }
+      if (t.id === 'rs-in') { mode = 1; draw(); return panel.querySelector('#rm-v').focus(); }
+      if (t.id === 'rs-out') { mode = -1; draw(); return panel.querySelector('#rm-v').focus(); }
+      if (t.id === 'rm-cancel') { mode = null; return draw(); }
+      if (t.id === 'rm-ok') {
+        const v = Math.abs(C.parseMoney(panel.querySelector('#rm-v').value));
+        if (!v) return toast('Informe o valor.', true);
+        const saved = M.reserveSaved(S().res.find(x => x.id === id));
+        if (mode < 0 && v > saved + 0.005) return toast(`A reserva só tem ${C.brl(saved)}.`, true);
+        const f = { v: mode * v, date: panel.querySelector('#rm-d').value, note: panel.querySelector('#rm-n').value };
+        await sync.commit(s => { const r = s.res.find(x => x.id === id); if (r) M.reserveMov(r, f); });
+        mode = null; draw(); render(); return toast(f.v > 0 ? 'Guardado.' : 'Retirado.');
+      }
+      const dm = t.closest('[data-delmov]');
+      if (dm && await askChoice('Apagar movimento', 'Apagar este movimento da reserva?', [{ label: 'Apagar', value: 'y', danger: true }])) {
+        await sync.commit(s => { const r = s.res.find(x => x.id === id); if (r) { r.movs = r.movs.filter(m => m.id !== dm.dataset.delmov); M.touch(r); } });
+        draw(); render();
+      }
+    };
+    draw();
+  });
+}
+
+/* ----- Fase 4: bloqueio, modo discreto e cópias no Drive ----- */
+function lockScreen() {
+  let box = document.getElementById('lock');
+  if (!lock.isLocked()) { if (box) box.remove(); document.body.classList.remove('locked'); return; }
+  document.body.classList.add('locked');
+  if (box) return;
+  box = document.createElement('div'); box.id = 'lock'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+  document.body.appendChild(box);
+  const st = lock.settings(); let pin = '';
+  const draw = msg => {
+    const w = lock.waitSeconds();
+    box.innerHTML = `<div class="lockin"><img src="icons/icon-192.png" alt=""><h1>Finanças</h1><p class="hint" id="lk-msg">${msg || (w ? `Muitas tentativas. Aguarde ${w} s.` : 'Digite o PIN')}</p>
+      <div class="dots">${Array.from({ length: st.pinLen }, (_, i) => `<i class="${i < pin.length ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-k="${n}">${n}</button>`).join('')}
+        ${st.bio ? '<button data-k="bio" aria-label="Usar Face ID ou Touch ID">◉</button>' : '<span></span>'}<button data-k="0">0</button><button data-k="del" aria-label="Apagar">⌫</button></div>
+      ${st.bio ? '<button class="btn block" data-k="bio">Usar Face ID / Touch ID</button>' : ''}
+      <button class="link" data-k="forgot">Esqueci o PIN</button></div>`;
+  };
+  draw();
+  box.onclick = async e => {
+    const k = (e.target.closest('[data-k]') || {}).dataset?.k; if (!k) return;
+    if (k === 'bio') { if (!(await lock.tryBio())) draw('Não foi possível confirmar. Use o PIN.'); return; }
+    if (k === 'forgot') {
+      if (!(await confirmBox('Sem o PIN, o jeito é apagar a cópia deste aparelho e entrar de novo com a sua conta Google (os dados estão no Drive). Alterações que ainda não foram para o Drive se perdem. Continuar?'))) return;
+      await lock.disable(); auth.signOut(); await sync.forgetDevice(); route(); return;
+    }
+    if (lock.waitSeconds()) return draw();
+    if (k === 'del') pin = pin.slice(0, -1); else if (pin.length < st.pinLen) pin += k;
+    draw();
+    if (pin.length === st.pinLen) {
+      const ok = await lock.tryPin(pin); pin = '';
+      if (!ok) { draw(lock.waitSeconds() ? `PIN errado. Aguarde ${lock.waitSeconds()} s.` : 'PIN errado.'); box.querySelector('.dots').classList.add('shake'); }
+    }
+  };
+}
+
+const discreet = () => { try { return localStorage.getItem('fin.discreet') === '1'; } catch { return false; } };
+function applyDiscreet() { document.body.classList.toggle('discreet', discreet()); const b = $('#eye'); if (b) { b.setAttribute('aria-pressed', discreet()); b.innerHTML = discreet() ? ICON_EYE_OFF : ICON_EYE; } }
+function toggleDiscreet() { try { localStorage.setItem('fin.discreet', discreet() ? '0' : '1'); } catch { /* bloqueado */ } applyDiscreet(); }
+const ICON_EYE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const ICON_EYE_OFF = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l18 18M10.6 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
+const AFTER = [[0, 'Assim que sair do app'], [1, 'Depois de 1 minuto fora'], [5, 'Depois de 5 minutos fora'], [15, 'Depois de 15 minutos fora']];
+function securityCardHTML() {
+  const st = lock.settings(), info = sync.syncInfo();
+  return `<div class="card"><h2>Segurança</h2>
+    <p class="hint">${st ? `Bloqueio com PIN de ${st.pinLen} números${st.bio ? ' e Face ID / Touch ID' : ''}.` : 'Sem bloqueio: quem pegar o celular desbloqueado abre o app.'}</p>
+    ${st ? `<label for="lk-after">Pedir o PIN</label><select id="lk-after">${AFTER.map(([v, l]) => `<option value="${v}" ${v === st.after ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <div class="row"><button class="btn" data-act="pin">Trocar PIN</button><span id="bio-slot"></span><button class="btn danger" data-act="lockoff">Desligar bloqueio</button></div>`
+    : '<button class="btn primary" data-act="pin">Criar PIN de bloqueio</button>'}
+    <label class="check"><input type="checkbox" id="disc" ${discreet() ? 'checked' : ''}> Modo discreto: esconder os valores (também pelo olho no topo da tela)</label>
+    <p class="hint">O bloqueio e o modo discreto valem só para este aparelho.</p></div>
+  <div class="card"><h2>Cópias no Drive</h2><p class="hint">Uma cópia por dia na subpasta <b>${esc(drive.BKFOLDER)}</b>, dentro de <b>${esc(drive.FOLDER)}</b>. Ficam as dos últimos 14 dias e uma de cada mês do último ano. Antes de restaurar ou de uma exclusão muito grande, o app guarda uma cópia extra.
+    ${info.lastBackupDay ? ` Última: ${C.fmtD(info.lastBackupDay)}/${info.lastBackupDay.slice(0, 4)}.` : ''}${info.backupError ? ` <span class="neg">Última tentativa falhou: ${esc(info.backupError)}</span>` : ''}</p>
+    <div class="row"><button class="btn" data-act="bklist">Ver e restaurar cópias</button><button class="btn" data-act="bknow">Fazer cópia agora</button></div></div>`;
+}
+
+async function bindSecurity() {
+  const slot = $('#bio-slot'), st = lock.settings();
+  if (slot && await lock.bioAvailable()) slot.outerHTML = `<button class="btn" data-act="bio">${st.bio ? 'Desligar Face ID' : 'Usar Face ID / Touch ID'}</button>`;
+  if ($('#lk-after')) $('#lk-after').onchange = async e => { await lock.setAfter(+e.target.value); toast('Salvo.'); };
+  $('#disc').onchange = () => { toggleDiscreet(); };
+}
+
+async function securityAction(a) {
+  if (a === 'pin') return pinSheet();
+  if (a === 'lockoff') {
+    const p = await askPin('Digite o PIN atual para desligar o bloqueio.'); if (p == null) return;
+    if (!(await lock.checkPin(p))) return toast('PIN errado.', true);
+    await lock.disable(); toast('Bloqueio desligado.'); return render();
+  }
+  if (a === 'bio') {
+    if (lock.settings().bio) { await lock.removeBio(); toast('Face ID desligado.'); return render(); }
+    try { await lock.enrollBio(); toast('Face ID / Touch ID ligado.'); } catch { toast('O aparelho não confirmou o Face ID / Touch ID.', true); }
+    return render();
+  }
+  if (a === 'bknow') {
+    try { if (await sync.backupNow('manual')) toast('Cópia guardada no Drive.'); else toast('Conecte-se ao Google para fazer a cópia.', true); } catch (e) { toast(e.message, true); }
+  }
+  if (a === 'bklist') return backupsSheet();
+}
+
+function askPin(msg) {
+  return new Promise(res => openSheet('', panel => {
+    panel.innerHTML = `<h2>PIN</h2><p class="hint">${esc(msg)}</p><input id="ap" type="password" inputmode="numeric" autocomplete="off" maxlength="6">
+      <div class="actions"><button class="btn" id="ap-c">Cancelar</button><button class="btn primary" id="ap-ok">OK</button></div>`;
+    panel.querySelector('#ap-c').onclick = () => { closeSheet(); res(null); };
+    panel.querySelector('#ap-ok').onclick = () => { const v = panel.querySelector('#ap').value; closeSheet(); res(v); };
+    setTimeout(() => panel.querySelector('#ap').focus(), 50);
+  }));
+}
+
+function pinSheet() {
+  const had = lock.enabled();
+  openSheet('', panel => {
+    panel.innerHTML = `<h2>${had ? 'Trocar PIN' : 'Criar PIN'}</h2>
+      ${had ? '<label for="pn-old">PIN atual</label><input id="pn-old" type="password" inputmode="numeric" autocomplete="off" maxlength="6">' : ''}
+      <label for="pn-1">Novo PIN (4 a 6 números)</label><input id="pn-1" type="password" inputmode="numeric" autocomplete="off" maxlength="6">
+      <label for="pn-2">Repita o PIN</label><input id="pn-2" type="password" inputmode="numeric" autocomplete="off" maxlength="6">
+      ${had ? '' : `<label for="pn-after">Pedir o PIN</label><select id="pn-after">${AFTER.map(([v, l]) => `<option value="${v}" ${v === 1 ? 'selected' : ''}>${l}</option>`).join('')}</select>`}
+      <p class="hint">Se esquecer o PIN, dá para apagar a cópia deste aparelho e entrar de novo com a conta Google: os dados estão no Drive.</p>
+      <div class="actions"><button class="btn" id="pn-c">Cancelar</button><button class="btn primary" id="pn-ok">Salvar</button></div>`;
+    panel.querySelector('#pn-c').onclick = closeSheet;
+    panel.querySelector('#pn-ok').onclick = async () => {
+      const v = id => panel.querySelector(id).value.trim();
+      if (had && !(await lock.checkPin(v('#pn-old')))) return toast('PIN atual errado.', true);
+      if (!/^\d{4,6}$/.test(v('#pn-1'))) return toast('O PIN deve ter de 4 a 6 números.', true);
+      if (v('#pn-1') !== v('#pn-2')) return toast('Os dois PINs não são iguais.', true);
+      await lock.setPin(v('#pn-1'), had ? undefined : +panel.querySelector('#pn-after').value);
+      closeSheet(); toast(had ? 'PIN trocado.' : 'Bloqueio ligado.'); render();
+    };
+  });
+}
+
+function backupsSheet() {
+  openSheet('', async panel => {
+    panel.innerHTML = '<h2>Cópias no Drive</h2><p class="hint">Carregando…</p>';
+    let list;
+    try { list = await sync.listBackups(); } catch (e) { panel.innerHTML = `<h2>Cópias no Drive</h2><p class="hint neg">${esc(e.message)}</p><div class="actions"><button class="btn" id="bk-c">Fechar</button></div>`; panel.querySelector('#bk-c').onclick = closeSheet; return; }
+    const label = n => { const m = n.match(/^financas-(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2})-(.+))?\.json$/); if (!m) return esc(n);
+      const why = { manual: 'feita por você', 'antes-de-restaurar': 'antes de restaurar', 'antes-de-grande-exclusao': 'antes de uma exclusão grande' }[m[6]] || m[6];
+      return `<b>${m[3]}/${m[2]}/${m[1]}</b>${m[4] ? ` às ${m[4]}h${m[5]}<small> · ${esc(why || '')}</small>` : '<small> · cópia do dia</small>'}`; };
+    panel.innerHTML = `<h2>Cópias no Drive</h2>
+      ${list.length ? `<p class="hint">Restaurar troca todos os dados atuais pelos da cópia, neste e nos outros aparelhos. Antes disso o app guarda uma cópia de como está agora.</p>
+        <ul class="list">${list.map(f => `<li><span class="t">${label(f.name)}<small>${f.size ? (f.size / 1024).toFixed(0) + ' KB' : ''}</small></span><button class="btn" data-bk="${f.id}">Restaurar</button></li>`).join('')}</ul>`
+        : '<p class="empty">Nenhuma cópia ainda. A primeira é feita na próxima sincronização.</p>'}
+      <div class="actions"><button class="btn" id="bk-c">Fechar</button></div>`;
+    panel.querySelector('#bk-c').onclick = closeSheet;
+    panel.onclick = async e => {
+      const b = e.target.closest('[data-bk]'); if (!b) return;
+      b.disabled = true;
+      try { const obj = await sync.downloadBackup(b.dataset.bk); closeSheet(); await restoreState(obj, 'esta cópia'); }
+      catch (err) { b.disabled = false; toast('Não foi possível baixar a cópia: ' + err.message, true); }
+    };
+  });
 }
 
 function faturaSheet(cardId, comp) {
@@ -1082,7 +1341,7 @@ function accSheet(acc, nature) {
       ${credit ? `<div class="grid2"><div><label>Fecha no dia</label><input id="a-close" inputmode="numeric" value="${acc ? acc.closeDay : ''}"></div>
         <div><label>Vence no dia</label><input id="a-due" inputmode="numeric" value="${acc ? acc.dueDay : ''}"></div></div>
         <label>Fatura paga pela conta</label><select id="a-pay">${optAccounts('debito', acc && acc.payAccount)}</select>`
-        : `<div class="grid2"><div><label for="a-ini">Saldo inicial (R$)</label><input id="a-ini" inputmode="decimal" value="${acc ? moneyText(acc.initial) : ''}" placeholder="0,00"></div>
+        : `<div class="grid2"><div><label for="a-ini">Saldo inicial (R$)</label><div class="pm"><input id="a-ini" inputmode="decimal" value="${acc ? moneyText(acc.initial) : ''}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>
            <div><label for="a-inid">No fim do dia</label><input id="a-inid" type="date" value="${acc && acc.initialDate ? acc.initialDate : (acc ? '' : yesterday())}"></div></div>
            <p class="hint">Lançamentos até essa data já estão dentro do saldo inicial e não mudam o saldo. Sem data, todos os lançamentos contam.</p>`}
       <div class="actions">${acc ? `<button class="btn ${acc.active === false ? '' : 'danger'}" id="a-off">${acc.active === false ? 'Reativar' : 'Arquivar'}</button>` : ''}<button class="btn" id="a-cancel">Cancelar</button><button class="btn primary" id="a-save">Salvar</button></div>
@@ -1204,6 +1463,7 @@ function pageAjustes() {
     <div class="card"><h2>Conta Google</h2><p class="hint">${info.email ? `Dados guardados no Drive de <b>${esc(info.email)}</b>, pasta <b>${esc(drive.FOLDER)}</b>.` : (signed ? 'Conectado. Identificando a conta…' : 'Não conectado neste momento. Os dados continuam salvos neste aparelho.')}</p>
       <div id="syncBox">${syncBoxHTML()}</div>
       <div class="row"><button class="btn" data-act="sync">Sincronizar agora</button>${signed ? '' : '<button class="btn primary" data-act="reconnect">Reconectar</button>'}</div></div>
+    ${securityCardHTML()}
     <div class="card"><h2>CPF para faturas com senha</h2>
       <p class="hint">${st.profile.cpf6 ? 'Cadastrado (6 primeiros dígitos).' : 'Não cadastrado. Faturas com senha vão pedir a senha toda vez.'}</p>
       <div class="row"><button class="btn" data-act="cpf">${st.profile.cpf6 ? 'Alterar' : 'Cadastrar'}</button>${st.profile.cpf6 ? '<button class="btn danger" data-act="cpfdel">Remover</button>' : ''}</div></div>
@@ -1218,9 +1478,11 @@ function pageAjustes() {
       <div class="row"><button class="btn" data-act="logout">Sair</button><button class="btn danger" data-act="forget">Remover dados deste aparelho</button></div></div>
     <p class="hint" style="text-align:center">Finanças ${VERSION}</p>`;
   $('#impfile').onchange = ev => importFile(ev.target.files[0], false);
+  bindSecurity();
   $('#page').onclick = async e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const a = b.dataset.act;
+    if (['pin', 'lockoff', 'bio', 'bknow', 'bklist'].includes(a)) return securityAction(a);
     if (a === 'sync') { if (!auth.isSignedIn()) return reconnect(); sync.sync(); }
     if (a === 'reconnect') reconnect();
     if (a === 'cats') { ui.sub = 'cats'; render(); window.scrollTo(0, 0); }
@@ -1266,19 +1528,29 @@ function exportBackup() {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
+/* troca todos os dados pelos de um backup (arquivo ou cópia do Drive); antes guarda no Drive uma cópia de como está */
+async function restoreState(obj, what) {
+  const st = M.importLegacy(obj);
+  if (!(await confirmBox(`Substituir TODOS os dados atuais pelos de ${what} (${st.tx.length} lançamentos, ${st.accounts.length} contas/cartões)? Vale para todos os aparelhos. Antes, o app guarda no Drive uma cópia de como está agora.`))) return;
+  try { await sync.backupNow('antes-de-restaurar'); } catch (e) { if (!(await confirmBox('Não deu para guardar a cópia de segurança antes (' + e.message + '). Restaurar mesmo assim?'))) return; }
+  const cur = S(), t = Date.now();
+  M.COLLS.forEach(k => (cur[k] || []).forEach(r => { if (!st[k].some(x => x.id === r.id)) st.deleted[r.id] = t; }));
+  M.COLLS.forEach(k => st[k].forEach(r => { r.upd = t; delete st.deleted[r.id]; }));
+  ['faturaMeta', 'rules', 'orc'].forEach(k => Object.values(st[k] || {}).forEach(v => { if (v && typeof v === 'object') v.upd = t; }));
+  if (!st.profile.cpf6 && cur && cur.profile.cpf6) st.profile = cur.profile;
+  st.profile.upd = st.config.upd = t;
+  await sync.replace(st);
+  toast('Dados restaurados.');
+  render();
+}
+
 async function importFile(file, fromWizard) {
   if (!file) return;
   try {
     const obj = JSON.parse(await file.text());
+    if (!fromWizard) return await restoreState(obj, 'este backup');
     const st = M.importLegacy(obj);
-    const n = st.tx.length, na = st.accounts.length;
-    const msg = fromWizard ? `Importar ${n} lançamentos e ${na} contas/cartões?`
-      : `Substituir TODOS os dados atuais por este backup (${n} lançamentos, ${na} contas/cartões)? Os dados atuais serão perdidos, inclusive no Drive.`;
-    if (!(await confirmBox(msg))) return;
-    if (!fromWizard) {
-      const cur = S(); const t = Date.now();
-      M.COLLS.forEach(k => (cur[k] || []).forEach(r => { if (!st[k].some(x => x.id === r.id)) st.deleted[r.id] = t; }));
-    }
+    if (!(await confirmBox(`Importar ${st.tx.length} lançamentos e ${st.accounts.length} contas/cartões?`))) return;
     if (!st.profile.cpf6 && S() && S().profile.cpf6) st.profile = S().profile;
     st.profile.upd = st.config.upd = Date.now();
     wz = null;

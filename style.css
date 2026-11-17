@@ -198,3 +198,31 @@ table.year tr.i td{color:var(--muted); font-size:12px} table.year tr.i .sticky{p
 .tabs button.badge{position:relative}
 .tabs button.badge::after{content:''; position:absolute; top:10px; left:calc(50% + 8px); width:9px; height:9px; border-radius:50%; background:var(--neg)}
 table.year th[data-cur]{color:var(--ink)}
+
+/* 0.6.0: botão ± e reservas */
+.pm{display:flex; gap:8px; align-items:stretch}
+.pm input{flex:1; min-width:0}
+.pmb{flex:0 0 52px; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--ink); font-size:22px; font-weight:600; cursor:pointer}
+.pmb:active{background:var(--bg)}
+.card.inset{background:var(--bg); box-shadow:none; margin:10px 0}
+.list li .link[data-delmov]{margin-left:8px; color:var(--muted)}
+
+/* 0.7.0: bloqueio, modo discreto */
+.eye{margin-left:auto; border:0; background:none; color:var(--muted); width:40px; height:40px; border-radius:50%; display:grid; place-items:center; cursor:pointer}
+.eye[aria-pressed="true"]{color:var(--ink)}
+header.top .eye + .chip{margin-left:4px}
+body.discreet .num, body.discreet .kpi b, body.discreet table.year td, body.discreet .list .t small{filter:blur(7px); user-select:none}
+body.locked #app, body.locked #sheet, body.locked .sheet.ask{visibility:hidden}
+#lock{position:fixed; inset:0; z-index:100; background:var(--bg); display:grid; place-items:center; padding:24px env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.lockin{width:100%; max-width:320px; text-align:center}
+.lockin img{width:64px; height:64px; border-radius:16px}
+.lockin h1{margin:8px 0 4px}
+.dots{display:flex; gap:14px; justify-content:center; margin:18px 0 22px}
+.dots i{width:14px; height:14px; border-radius:50%; border:2px solid var(--ink); display:block}
+.dots i.on{background:var(--ink)}
+.dots.shake{animation:shake .35s}
+@keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+.pad{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:16px}
+.pad button{width:72px; height:72px; justify-self:center; border-radius:50%; border:0; background:var(--card); font-size:26px; color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08); cursor:pointer}
+.pad button:active{background:var(--line)}
+.lockin .link{margin-top:14px}

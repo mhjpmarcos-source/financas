@@ -5,7 +5,7 @@
 
 export const APP = 'financas';
 export const FORMAT = 3;
-export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans'];
+export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans', 'res'];
 const TOMBSTONE_DAYS = 180;
 
 export const uid = p => (p || 'x') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -48,7 +48,7 @@ export function emptyState() {
     app: APP, format: FORMAT, createdAt: new Date().toISOString(), updatedAt: 0,
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
-    accounts: [], groups: [], items: [], tx: [], loans: [],
+    accounts: [], groups: [], items: [], tx: [], loans: [], res: [],
     faturaMeta: {}, rules: {}, orc: {}, deleted: {}
   };
 }
@@ -248,6 +248,36 @@ function monthsBetween(d1, d2) { const [y1, m1] = d1.split('-').map(Number), [y2
 /* ---------- dívidas com terceiros ----------
    dir 'in' = alguém me deve (a receber); 'out' = eu devo (a pagar).
    As parcelas são lançamentos pendentes (receita ou despesa) ligados ao empréstimo por loanId. */
+/* reservas (objetivos): dinheiro separado "de cabeça" dentro do saldo das contas.
+   Guardar/retirar não move dinheiro entre contas; só muda quanto do saldo está comprometido. */
+export function newReserve(f) {
+  return touch({ id: uid('r'), name: String(f.name || '').trim() || 'Reserva', target: Math.max(0, Math.round((+f.target || 0) * 100) / 100),
+    deadline: f.deadline || '', color: f.color || '#2f8f6b', movs: [], done: false });
+}
+export function reserveMov(r, f) {
+  const v = Math.round((+f.v || 0) * 100) / 100;
+  if (!v) return null;
+  const m = { id: uid('m'), date: f.date || todayISO(), v, note: String(f.note || '').trim() };
+  if (f.ini) m.ini = true;
+  r.movs = [...(r.movs || []), m].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  touch(r); return m;
+}
+export const reserveSaved = r => Math.round((r.movs || []).reduce((s, m) => s + m.v, 0) * 100) / 100;
+
+/* ----- cópias de segurança no Drive -----
+   nomes: financas-AAAA-MM-DD.json (diária) e financas-AAAA-MM-DD-HHMM-motivo.json (antes de restaurar / grande exclusão).
+   Fica: as 14 diárias mais recentes, a mais recente de cada um dos últimos 12 meses e as de motivo por 60 dias. */
+export const recordCount = s => COLLS.reduce((n, k) => n + ((s && s[k]) || []).length, 0);
+export function backupsToTrash(files, today) {
+  const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+  const parsed = files.map(f => ({ f, d: (f.name.match(/^financas-(\d{4}-\d{2}-\d{2})/) || [])[1], extra: /^financas-\d{4}-\d{2}-\d{2}-/.test(f.name) })).filter(x => x.d);
+  const daily = parsed.filter(x => !x.extra).sort((a, b) => a.d < b.d ? 1 : a.d > b.d ? -1 : 0);
+  const keep = new Set(daily.slice(0, 14).map(x => x.f.id)), seen = new Set(), from = addDays(today, -366);
+  daily.forEach(x => { const mo = x.d.slice(0, 7); if (!seen.has(mo)) { seen.add(mo); if (x.d >= from) keep.add(x.f.id); } });
+  parsed.filter(x => x.extra && x.d >= addDays(today, -60)).forEach(x => keep.add(x.f.id));
+  return parsed.filter(x => !keep.has(x.f.id)).map(x => x.f);
+}
+
 export function makeLoan(f) {
   const t = Date.now();
   const loan = {

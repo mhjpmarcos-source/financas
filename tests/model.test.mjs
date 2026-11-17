@@ -124,3 +124,35 @@ console.log('model tests OK');
   const a = M.clone(s), c2 = M.clone(s); M.setBudget(c2, sal.id, 5000); assert.equal(M.merge(a, c2).orc[sal.id].def, 5000);
   console.log('orçamento/anual/csv/ics tests OK');
 }
+
+// reservas
+{
+  const s = M.emptyState(); const r = M.newReserve({ name: 'Emergência', target: 1200, deadline: '2027-04-30' });
+  M.reserveMov(r, { v: 200, date: '2026-11-02' }); M.reserveMov(r, { v: -50, date: '2026-11-10' }); s.res.push(r);
+  assert.equal(M.reserveSaved(r), 150);
+  const R = C.reserves(s, '2026-11-16'), x = R.list[0];
+  assert.equal(R.total, 150); assert.equal(x.rest, 1050); assert.equal(x.months, 6); assert.equal(x.perMonth, 175); assert.equal(x.thisMonth, 150);
+  r.done = true; assert.equal(C.reserves(s, '2026-11-16').total, 0, 'concluída sai do total');
+  assert.equal(M.reserveMov(r, { v: 0 }), null);
+  // sincronização: reserva entra no merge como as outras coleções
+  const a = M.emptyState(), b = M.emptyState(); const r2 = M.newReserve({ name: 'Viagem' }); b.res.push(r2);
+  const m = M.merge(a, b); assert.equal(m.res.length, 1);
+  M.removeRecord(m, 'res', r2.id); assert.equal(M.merge(m, b).res.length, 0, 'exclusão vence');
+  console.log('reservas tests OK');
+}
+
+// retenção das cópias de segurança
+{
+  const today = '2026-11-16', files = [];
+  for (let i = 0; i < 400; i++) { const d = new Date('2026-11-16T12:00:00'); d.setDate(d.getDate() - i); files.push({ id: 'd' + i, name: `financas-${d.toISOString().slice(0, 10)}.json` }); }
+  files.push({ id: 'x1', name: 'financas-2026-11-01-1030-antes-de-restaurar.json' }, { id: 'x2', name: 'financas-2026-08-01-1030-manual.json' }, { id: 'o', name: 'outro.json' });
+  const trash = new Set(M.backupsToTrash(files, today).map(f => f.id));
+  for (let i = 0; i < 14; i++) assert(!trash.has('d' + i), 'últimos 14 dias ficam');
+  assert(trash.has('d20') && !trash.has('x1') && trash.has('x2') && !trash.has('o'));
+  const kept = files.filter(f => /^d/.test(f.id) && !trash.has(f.id)).map(f => f.name.slice(9, 19));
+  const months = new Set(kept.map(d => d.slice(0, 7))); assert.equal(kept.length, 14 + months.size - 1, 'uma por mês além das diárias');
+  assert(!kept.some(d => d < '2025-11-15'), 'nada com mais de um ano');
+  assert(kept.includes('2026-10-31') && kept.includes('2026-01-31'), 'a mais recente de cada mês');
+  assert.equal(M.recordCount(M.emptyState()), 0);
+  console.log('cópias tests OK');
+}

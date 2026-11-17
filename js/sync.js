@@ -110,6 +110,8 @@ export async function sync() {
         const c = await drive.create(JSON.stringify(S));
         info.fileId = c.id; info.version = String(c.version); info.dirty = false;
       } else if (info.dirty) {
+        /* trava contra perda grande: se o envio vai apagar mais da metade dos registros, guarda antes uma cópia do que está no Drive */
+        if ((info.remoteCount || 0) > 20 && model.recordCount(S) < info.remoteCount * 0.5) await drive.copyToBackup(info.fileId, backupName('antes-de-grande-exclusao'));
         const u = await drive.update(info.fileId, JSON.stringify(S));
         info.version = String(u.version); info.dirty = false;
       }
@@ -118,7 +120,9 @@ export async function sync() {
       const u = await drive.whoAmI();
       info.email = u.emailAddress || ''; auth.setHint(info.email);
     }
+    if (S && S.config.setupDone) info.remoteCount = model.recordCount(S);
     info.lastSync = Date.now();
+    await dailyBackup();
     await saveInfo();
     setStatus('ok');
   } catch (e) {
@@ -130,6 +134,31 @@ export async function sync() {
     if (again) { again = false; schedule(300); }
   }
 }
+
+/* ----- cópias de segurança no Drive ----- */
+function backupName(reason) {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `financas-${model.todayISO()}` + (reason ? `-${p(d.getHours())}${p(d.getMinutes())}-${reason}` : '') + '.json';
+}
+/* uma por dia (a primeira sincronização do dia guarda como os dados estavam), mais a limpeza das antigas */
+async function dailyBackup() {
+  const today = model.todayISO();
+  if (!info.fileId || info.lastBackupDay === today) return;
+  try {
+    const list = await drive.listBackups();
+    if (!list.some(f => f.name === backupName())) await drive.copyToBackup(info.fileId, backupName());
+    for (const f of model.backupsToTrash(list, today)) await drive.trash(f.id);
+    info.lastBackupDay = today; info.backupError = '';
+  } catch (e) { info.backupError = e.message; }
+}
+/* cópia na hora (botão em Ajustes ou antes de restaurar); devolve false se não estiver conectado */
+export async function backupNow(reason = 'manual') {
+  if (!auth.isSignedIn() || !info.fileId) return false;
+  await drive.copyToBackup(info.fileId, backupName(reason));
+  return true;
+}
+export const listBackups = () => drive.listBackups();
+export const downloadBackup = id => drive.download(id);
 
 /* verifica se há dados no Drive desta conta (usado no primeiro acesso) */
 export async function remoteExists() {

@@ -6,7 +6,7 @@ export function createDrive() {
     if (!q) return [];
     const name = (q.match(/name='([^']+)'/) || [])[1], parent = (q.match(/'([^']+)' in parents/) || [])[1], folder = q.includes('folder');
     return Object.entries(files).filter(([, f]) => !f.trashed && (!name || f.name === name) && (!parent || f.parents.includes(parent)) && (folder ? f.mime.includes('folder') : true))
-      .map(([id, f]) => ({ id, name: f.name, version: String(f.version), modifiedTime: 'x', createdTime: String(f.created) }));
+      .map(([id, f]) => ({ id, name: f.name, version: String(f.version), modifiedTime: 'x', createdTime: String(f.created), size: String(f.content.length) })).sort((a, b) => q.includes('in parents') && !name ? (a.name < b.name ? 1 : -1) : 0);
   };
   const data = () => Object.values(files).filter(f => f.name === 'financas-dados.json' && !f.trashed);
   async function attach(ctx, email = 'pessoa@exemplo.com') {
@@ -16,7 +16,9 @@ export function createDrive() {
       const u = new URL(r.request().url()), m = r.request().method(), path = u.pathname;
       if (path.endsWith('/about')) return r.fulfill({ json: { user: { emailAddress: email } } });
       if (m === 'GET' && path === '/drive/v3/files') return r.fulfill({ json: { files: list(u.searchParams.get('q')) } });
-      if (m === 'POST' && path === '/drive/v3/files') { const md = JSON.parse(r.request().postData()); const id = 'F' + (++seq); files[id] = { name: md.name, mime: md.mimeType, parents: [], version: 1, content: '', created: seq }; return r.fulfill({ json: { id } }); }
+      if (m === 'POST' && path === '/drive/v3/files') { const md = JSON.parse(r.request().postData()); const id = 'F' + (++seq); files[id] = { name: md.name, mime: md.mimeType, parents: md.parents || [], version: 1, content: '', created: seq }; return r.fulfill({ json: { id } }); }
+      const cp = path.match(/files\/(\w+)\/copy$/);
+      if (cp && m === 'POST') { const md = JSON.parse(r.request().postData()), src = files[cp[1]]; const id = 'C' + (++seq); files[id] = { ...src, name: md.name, parents: md.parents, version: 1, created: seq, trashed: false }; return r.fulfill({ json: { id, name: md.name } }); }
       if (m === 'POST' && path === '/upload/drive/v3/files') {
         const body = r.request().postData(); const parts = body.split(/\r\n--fin\w+/);
         const md = JSON.parse(parts[0].split('\r\n\r\n')[1]); const content = parts[1].split('\r\n\r\n').slice(1).join('\r\n\r\n');
@@ -33,7 +35,8 @@ export function createDrive() {
       r.fulfill({ status: 400, body: '?' });
     });
   }
-  return { files, data, current: () => { const d = data()[0]; return d && JSON.parse(d.content); }, attach };
+  const backups = () => Object.values(files).filter(f => /^financas-\d/.test(f.name) && !f.trashed);
+  return { files, data, backups, current: () => { const d = data()[0]; return d && JSON.parse(d.content); }, attach };
 }
 
 export async function newDevice(browser, devices, base, drive, label) {

@@ -12,6 +12,23 @@ const NF = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }
 export const brl = v => NF.format(r2(v));
 export const fmtD = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';
 
+/* reservas: quanto tem, quanto falta, quanto guardar por mês até o prazo, e quanto do saldo fica livre */
+export function reserves(S, today) {
+  const list = (S.res || []).map(r => {
+    const saved = r2((r.movs || []).reduce((s, m) => s + m.v, 0));
+    const rest = r2(Math.max(0, (r.target || 0) - saved));
+    let months = null, perMonth = null;
+    if (r.deadline && rest > 0) {
+      months = Math.max(1, (+r.deadline.slice(0, 4) - +today.slice(0, 4)) * 12 + (+r.deadline.slice(5, 7) - +today.slice(5, 7)) + (r.deadline >= today ? 1 : 0));
+      perMonth = r2(Math.ceil(rest / months * 100) / 100);
+    }
+    const thisMonth = r2((r.movs || []).filter(m => !m.ini && m.date.slice(0, 7) === today.slice(0, 7)).reduce((s, m) => s + m.v, 0));
+    return { r, saved, rest, pct: r.target ? Math.min(100, saved / r.target * 100) : null, months, perMonth, thisMonth, late: !!(r.deadline && r.deadline < today && rest > 0) };
+  });
+  const active = list.filter(x => !x.r.done);
+  return { list: active.concat(list.filter(x => x.r.done)), total: r2(active.reduce((s, x) => s + x.saved, 0)) };
+}
+
 /* converte "1.234,56", "1234,56", "R$ 12" ou "-3,5" em número */
 export function parseMoney(s) {
   if (typeof s === 'number') return s;

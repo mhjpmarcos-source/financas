@@ -3,6 +3,7 @@ import * as auth from './auth.js';
 
 export const FOLDER = 'Finanças (app)';
 export const FILE = 'financas-dados.json';
+export const BKFOLDER = 'Cópias de segurança';
 
 export class AuthError extends Error {}
 
@@ -44,6 +45,29 @@ async function ensureFolder() {
     body: JSON.stringify({ name: FOLDER, mimeType: 'application/vnd.google-apps.folder' })
   });
   return c.id;
+}
+
+/* ----- cópias de segurança: subpasta da pasta do app; cada cópia é uma duplicata do arquivo de dados ----- */
+async function backupFolder(create) {
+  const root = create ? await ensureFolder() : (await findOne(`name=${quote(FOLDER)} and mimeType='application/vnd.google-apps.folder'`) || {}).id;
+  if (!root) return null;
+  const f = await findOne(`name=${quote(BKFOLDER)} and mimeType='application/vnd.google-apps.folder' and ${quote(root)} in parents`);
+  if (f || !create) return f ? f.id : null;
+  const c = await api('drive/v3/files?fields=id', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: BKFOLDER, mimeType: 'application/vnd.google-apps.folder', parents: [root] })
+  });
+  return c.id;
+}
+export async function listBackups() {
+  const bk = await backupFolder(false);
+  if (!bk) return [];
+  const d = await api('drive/v3/files?spaces=drive&pageSize=200&fields=files(id,name,size,createdTime)&orderBy=name desc&q=' + qs(`${quote(bk)} in parents and trashed=false`));
+  return d.files;
+}
+export async function copyToBackup(fileId, name) {
+  const bk = await backupFolder(true);
+  return api(`drive/v3/files/${fileId}/copy?fields=id,name`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parents: [bk] }) });
 }
 
 /* arquivo de dados: procura pelo nome dentro da pasta do app */
