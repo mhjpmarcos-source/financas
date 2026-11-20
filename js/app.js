@@ -13,7 +13,7 @@ import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 import * as L from './link.js';
 
-export const VERSION = '0.10.0';
+export const VERSION = '0.10.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -428,9 +428,25 @@ function askChoice(title, msg, options) {
 }
 
 /* ----- lançamentos ----- */
+/* a busca atualiza só os resultados: trocar o campo a cada letra fazia o iPhone fechar e reabrir o teclado (e trocar o tipo dele) */
+let qTimer = null;
 function pageLanc() {
+  const q = ui.q || '';
+  $('#page').innerHTML = `<div class="search"><input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Buscar em todos os meses (nome ou valor)" value="${esc(q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button class="btn" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)">Importar</button></div><div id="lbody">${lancBody()}</div>`;
+  $('#imp').onclick = () => pickImportFile({});
+  const qi = $('#q');
+  qi.oninput = () => { ui.q = qi.value; clearTimeout(qTimer); qTimer = setTimeout(() => { const b = $('#lbody'); if (b) b.innerHTML = lancBody(); }, 120); };
+  qi.onkeydown = e => { if (e.key === 'Enter') qi.blur(); }; // "Buscar" no teclado fecha o teclado para ver os resultados
+  $('#page').onclick = e => {
+    if (monthNavClick(e, pageLanc)) return;
+    if (e.target.closest('#rv-open')) return conferirSheet();
+    const fo = e.target.closest('[data-fat]'); if (fo) return faturaSheet(fo.dataset.fat, ui.month);
+    const li = e.target.closest('[data-tx]'); if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx));
+  };
+}
+function lancBody() {
   const st = S(), m = ui.month, q = ui.q || '';
-  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"><button class="btn" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)">Importar</button></div>`;
+  let html = '';
   if (q.trim()) {
     const res = C.search(st, q);
     html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
@@ -466,16 +482,7 @@ function pageLanc() {
       });
     }
   }
-  $('#page').innerHTML = html;
-  $('#imp').onclick = () => pickImportFile({});
-  const qi = $('#q');
-  qi.oninput = () => { ui.q = qi.value; const pos = qi.selectionStart; pageLanc(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
-  $('#page').onclick = e => {
-    if (monthNavClick(e, pageLanc)) return;
-    if (e.target.closest('#rv-open')) return conferirSheet();
-    const fo = e.target.closest('[data-fat]'); if (fo) return faturaSheet(fo.dataset.fat, ui.month);
-    const li = e.target.closest('[data-tx]'); if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx));
-  };
+  return html;
 }
 
 function optAccounts(nature, sel) {
@@ -1341,7 +1348,7 @@ function conferirSheet() {
       const sec = (title, hint, rows) => rows.length ? `<h3 class="sub">${title}</h3><p class="hint">${hint}</p><ul class="list rv">${rows.join('')}</ul>` : '';
       panel.innerHTML = `<h2>Para conferir</h2><p class="hint">O app não muda nada sozinho: ele aponta o que parece contar errado e você decide.</p>`
         + sec('Pagamento de fatura lançado como despesa', 'Do jeito que está, o gasto conta duas vezes: nas compras do cartão e de novo aqui.',
-          R.pay.map((x, i) => `<li>${head(x.tx)}<small class="why">${x.fatura ? `Mesmo valor da fatura ${name(x.cardId)} de ${shortM(x.fatura.comp)}.` : `Mesmo nome de outro pagamento do cartão ${name(x.cardId)}.`}</small>
+          R.pay.map((x, i) => `<li>${head(x.tx)}<small class="why">${x.fatura ? `Mesmo valor da fatura ${name(x.cardId)} de ${shortM(x.fatura.comp)}.` : x.why === 'descricao' ? `A descrição diz que é pagamento de fatura${x.cardId ? ' (' + name(x.cardId) + '?)' : ''}.` : `Mesmo nome de outro pagamento do cartão ${name(x.cardId)}.`}</small>
             <span class="row"><button class="btn small" data-rvno="${x.tx.id}">Não é</button><button class="btn small primary" data-rvpay="${i}">É o pagamento</button></span></li>`)
           .concat(R.relink.map((x, i) => `<li>${head(x.tx)}<small class="why">Está ligado à fatura do ${name(x.from)}, mas a descrição fala em ${name(x.to)}.</small>
             <span class="row"><button class="btn small" data-rvno="${x.tx.id}">Está certo</button><button class="btn small primary" data-rvfix="${i}">Corrigir cartão</button></span></li>`)))
@@ -1361,7 +1368,7 @@ function conferirSheet() {
       if (b.dataset.rvno) { await sync.commit(s => L.ignoreReview(s, [b.dataset.rvno])); return draw(); }
       if (b.dataset.rvpay) {
         const x = R.pay[+b.dataset.rvpay];
-        if (!x.fatura) return payFaturaSheet(x.tx, { cardId: x.cardId, then: conferirSheet });
+        if (!x.fatura) return payFaturaSheet(x.tx, { cardId: x.cardId || undefined, then: conferirSheet });
         await sync.commit(s => { L.toCardPay(s, x.tx.id, x.fatura.key, x.cardId); });
         toast(`Vinculado à fatura ${(accById(x.cardId) || {}).name} de ${shortM(x.fatura.comp)}.`); return draw();
       }

@@ -66,6 +66,11 @@ await p.click('[data-tab=resumo]'); assert.match(await label(), /março/i, 'o m�
 await p.click('[data-tab=agenda]'); await p.click('#agseg [data-v=fix]'); await p.click('#fx-new-rec'); await p.waitForSelector('#f-save');
 assert.match(await p.textContent('#sheet h2'), /Nova receita que se repete/); assert.equal(await p.getAttribute('#seg [data-type=rec]', 'aria-pressed'), 'true'); assert.equal(await p.inputValue('#f-freq'), 'fixa');
 await p.click('#f-cancel'); await p.click('#fx-new-parc'); assert.match(await p.textContent('#sheet h2'), /parcelada/); assert.equal(await p.inputValue('#f-freq'), 'parc'); await p.click('#f-cancel');
+// busca: digitar não troca o campo (no iPhone, trocar o campo reabria o teclado a cada tecla)
+await p.click('[data-tab=lanc]'); await p.evaluate(() => { window.__q = document.querySelector('#q'); });
+await p.type('#q', '2150', { delay: 30 }); await wait(400);
+assert.equal(await p.evaluate(() => window.__q === document.querySelector('#q') && document.activeElement === window.__q), true, 'mesmo campo e com o foco');
+assert.match(await p.textContent('#lbody'), /IMOBILIARIA/); await p.fill('#q', ''); await wait(300);
 // lançamento com data no futuro começa como pendente
 await p.click('[data-tab=lanc]'); await p.click('.month [data-m="1"]'); await p.click('#fab'); await p.waitForSelector('#f-save'); assert.equal(await p.isChecked('#f-pend'), true); await p.click('#f-cancel');
 console.log('erros:', errs.join('\n') || 'nenhum'); assert.equal(errs.length, 0);

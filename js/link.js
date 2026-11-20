@@ -117,6 +117,11 @@ export function review(S) {
     const pr = S.rules && S.rules['pay:' + keyOf(t)];
     if (f) pay.push({ tx: t, fatura: f, cardId: f.cardId, why: 'valor' });
     else if (pr && cards.has(pr.cardId)) pay.push({ tx: t, fatura: null, cardId: pr.cardId, why: 'nome' });
+    else if (/^(PAGAMENTO DE FATURA|PAGTO CARTAO|PAGAMENTO CARTAO)/.test(up(t.desc))) { // o próprio extrato diz que é pagamento de fatura
+      const dw = new Set(up(t.desc).split(/[^A-Z0-9]+/).filter(w => w.length >= 3 && !/^(PAGAMENTO|FATURA|CARTAO|PAGTO|CREDITO)$/.test(w)));
+      const card = S.accounts.find(a => a.nature === 'credito' && up(a.name).split(/[^A-Z0-9]+/).some(w => w.length >= 3 && dw.has(w)));
+      pay.push({ tx: t, fatura: null, cardId: card ? card.id : '', why: 'descricao' });
+    }
   });
   const refund = [], used = new Set();
   real.filter(t => t.type === 'rec' && REFUND.test(up(t.desc)) && !ign.has(t.id)).forEach(r => {
