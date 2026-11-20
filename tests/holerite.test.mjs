@@ -48,7 +48,12 @@ let res = H.applySlipPlan(S, plan, '2026-02-10');
 assert.deepEqual([res.slips, res.created, res.folha], [1, 1, 3]);
 const sal = S.tx.find(t => t.slipId && t.type === 'rec');
 assert.deepEqual([sal.amount, sal.date, sal.status, sal.itemId, sal.accountId], [4850, '2026-02-05', 'liq', item('Salário'), conta.id]);
-const folha = S.tx.filter(t => t.folha); assert.equal(folha.length, 3); assert(folha.every(t => t.type === 'deb' && t.date === '2026-02-05' && t.folhaItem === item('Salário')));
+const folha = S.tx.filter(t => t.folha && !t.prev); assert.equal(folha.length, 3); assert(folha.every(t => t.type === 'deb' && t.date === '2026-02-05' && t.folhaItem === item('Salário') && t.accountId === ''), 'pago pela folha: sem conta');
+// o consignado é uma dívida paga pela folha, com as parcelas seguintes agendadas até o fim; os outros descontos, 12 meses
+assert.equal(S.loans.length, 1); const cons = S.loans[0]; assert.deepEqual([cons.dir, cons.folha, cons.person, cons.parcel, cons.i0, cons.n, cons.asOf, cons.accountId], ['out', true, 'Empréstimo Banco Exemplo 1', 400, 5, 24, '2026-01', '']);
+const sched = S.tx.filter(t => t.folha && t.prev); assert.equal(sched.length, 19 + 12 + 12); assert(sched.every(t => t.status === 'pend' && t.accountId === ''));
+const nextP = sched.filter(t => t.loanId === cons.id).sort((a, b) => a.date < b.date ? -1 : 1); assert.deepEqual([nextP[0].desc, nextP[0].date, nextP[18].desc, nextP[18].folhaM], ['Empréstimo Banco Exemplo 1 (6/24)', '2026-03-05', 'Empréstimo Banco Exemplo 1 (24/24)', '2027-08']);
+assert.deepEqual(C.monthSummary(S, '2026-03'), { rec: 5500, desp: 650, saldo: 4850, folha: 650 }, 'mês futuro: líquido previsto + o que a folha paga');
 assert.equal(folha.find(t => /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (5/24)');
 // o saldo só recebe o líquido; o resumo mostra os descontos em folha como despesa e soma o mesmo valor à receita
 assert.equal(C.balances(S, '2026-02-28', true)[conta.id], 4950);
@@ -105,24 +110,26 @@ assert.equal(S.slips.length, 5); assert.equal(H.slipsOf(S, job.id).length, 5);
 // ---------- consignado: parcela lida e correção manual ----------
 let loans = H.loansOf(S, job.id);
 assert.deepEqual([loans[0].i, loans[0].n, loans[0].left, loans[0].end, loans[0].rest, loans[0].manual], [8, 24, 16, '2027-08', 6400, false]);
-const n = H.setLoanParc(S, job.id, loans[0].key, 10, 30, '2026-04'); assert.equal(n, 4, 'descrições dos 4 meses corrigidas');
+assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 16);
+const n = H.setLoanParc(S, loans[0].id, 10, 30, '2026-04', '2026-05-10'); assert(n >= 4, 'descrições corrigidas');
+assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 20, 'agenda refeita até a parcela 30');
 loans = H.loansOf(S, job.id); assert.deepEqual([loans[0].i, loans[0].n, loans[0].left, loans[0].end, loans[0].manual], [10, 30, 20, '2027-12', true]);
-assert.deepEqual(S.tx.filter(t => t.folha && /Empr/.test(t.desc)).map(t => t.desc.match(/\((.*)\)/)[1]).sort(), ['10/30', '7/30', '8/30', '9/30']);
+assert.deepEqual(S.tx.filter(t => t.folha && !t.prev && /Empr/.test(t.desc)).map(t => t.desc.match(/\((.*)\)/)[1]).sort(), ['10/30', '7/30', '8/30', '9/30']);
 // a correção continua valendo no próximo contracheque (anda um número por mês)
 const h5 = JSON.parse(JSON.stringify(h3)); Object.assign(h5, { de: '2026-05-01', ate: '2026-05-31', credito: '2026-06-05' });
 plan = H.buildSlipPlan(S, [h5]); assert.deepEqual([plan.rubs.find(r => r.loan).pi, plan.rubs.find(r => r.loan).pn], [11, 30]);
 // correção feita na própria revisão
 plan.rubs.find(r => r.loan).pi = 12; plan.rubs.find(r => r.loan).pedit = true;
 H.applySlipPlan(S, plan, '2026-06-10');
-assert.equal(S.tx.find(t => t.folha && t.date === '2026-06-05' && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (12/30)');
-assert.deepEqual(job.parc[loans[0].key], { i: 12, n: 30, asOf: '2026-05' });
-H.setLoanParc(S, job.id, loans[0].key, 0, 0, '2026-05'); assert.equal(H.loansOf(S, job.id)[0].i, 7, 'sem correção volta a valer o que o contracheque traz');
+assert.equal(S.tx.find(t => t.folha && !t.prev && t.date === '2026-06-05' && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (12/30)');
+assert.deepEqual([cons.i0, cons.n, cons.asOf, cons.manual, job.parc], [12, 30, '2026-05', true, undefined]);
+H.setLoanParc(S, cons.id, 0, 0, '2026-05', '2026-06-10'); assert.deepEqual([H.loansOf(S, job.id)[0].i, H.loansOf(S, job.id)[0].n], [7, 24], 'sem correção volta a valer o que o contracheque traz');
 
 // ---------- o usuário muda a classificação: vale para os próximos e recalcula o piso ----------
 plan = H.buildSlipPlan(S, [h5]); assert.equal(plan.rubs.find(r => r.desc === 'Seguro de Vida').how, 'escolha anterior');
 plan.rubs.find(r => r.desc === 'Seguro de Vida').exp = item('Seguro do veículo');
 H.applySlipPlan(S, plan, '2026-06-10');
-assert.equal(S.tx.filter(t => t.folha && t.date === '2026-06-05').length, 4);
+assert.equal(S.tx.filter(t => t.folha && !t.prev && t.date === '2026-06-05').length, 4);
 assert.equal(C.monthSummary(S, '2026-06').folha, 680);
 
 // ---------- extrato importado depois: o crédito do salário é reconhecido como já lançado ----------
@@ -134,7 +141,7 @@ applyPlan(S2, buildPlan(S2, { kind: 'extrato', lines: [{ date: '2026-02-05', des
 assert.equal(S2.tx.length, 1); const ext = S2.tx[0];
 H.applySlipPlan(S2, H.buildSlipPlan(S2, [h1]));
 assert.equal(S2.tx.filter(t => t.type === 'rec' && t.date.startsWith('2026-02')).length, 1); assert.equal(ext.slipId, S2.slips[0].id); assert.equal(ext.desc, 'RECEBIMENTO DE PROVENTOS');
-assert.equal(S2.tx.filter(t => t.folha).length, 3);
+assert.equal(S2.tx.filter(t => t.folha && !t.prev).length, 3);
 
 // salário e 13º creditados no mesmo dia que o extrato trouxe como um crédito só: o total continua o mesmo
 const S5 = M.emptyState(); S5.config.setupDone = true; S5.groups = pl.groups; S5.items = pl.items; const c5 = M.newAccount({ nature: 'debito', name: 'Conta Exemplo' }); S5.accounts.push(c5);
@@ -149,7 +156,7 @@ assert.equal(H.guessAccount({ accounts: [{ id: 'x', nature: 'debito', name: 'BB'
 // contracheque antigo importado bem depois: a previsão começa no mês atual, sem "atrasados" no passado
 const S4 = M.emptyState(); S4.config.setupDone = true; S4.groups = pl.groups; S4.items = pl.items; const c4 = M.newAccount({ nature: 'debito', name: 'Conta Exemplo' }); S4.accounts.push(c4);
 H.applySlipPlan(S4, H.buildSlipPlan(S4, [h1]), '2026-11-20');
-assert.equal(S4.rec[0].start, '2026-11'); assert.equal(S4.tx.filter(t => t.prev && t.recM < '2026-11').length, 0); assert.equal(S4.tx.filter(t => t.prev).length, 13);
+assert.equal(S4.rec[0].start, '2026-11'); assert.equal(S4.tx.filter(t => t.prev && t.recM < '2026-11').length, 0); assert.equal(S4.tx.filter(t => t.prev && t.recId).length, 13);
 assert.equal(C.pendings(S4, '2026-10-31').length, 0);
 H.applySlipPlan(S4, H.buildSlipPlan(S4, [h2, h3]), '2026-11-20'); assert.equal(S4.tx.filter(t => t.type === 'rec' && !t.prev).length, 3); assert.equal(S4.rec[0].amount, 4965);
 assert.equal(S4.tx.find(t => t.recM === '2026-12').amount, 4965);
@@ -157,13 +164,26 @@ assert.equal(S4.tx.find(t => t.recM === '2026-12').amount, 4965);
 // ---------- só histórico (sem conta), excluir contracheque, junção entre aparelhos ----------
 const S3 = M.emptyState(); S3.config.setupDone = true; S3.groups = pl.groups; S3.items = pl.items;
 plan = H.buildSlipPlan(S3, [h1, h2]); assert.equal(plan.banks['Banco Exemplo'], '');
-res = H.applySlipPlan(S3, plan); assert.equal(S3.slips.length, 2); assert.equal(S3.tx.length, 0); assert.equal(S3.rec.length, 0); assert.equal(res.piso.piso, 4850);
+res = H.applySlipPlan(S3, plan, '2026-03-10'); assert.equal(S3.slips.length, 2); assert.equal(S3.tx.filter(t => !t.folha).length, 0, 'sem conta: o líquido não é lançado'); assert.equal(S3.rec.length, 0); assert.equal(res.piso.piso, 4850);
+assert.equal(S3.tx.filter(t => t.folha && !t.prev).length, 6, 'mas o que a folha paga é registrado do mesmo jeito'); assert.equal(S3.loans.length, 1); assert.deepEqual([H.loansOf(S3)[0].i, H.loansOf(S3)[0].n], [6, 24]);
+assert.deepEqual(C.balances(S3, '2026-12-31', false), {});
+// consignado perto do fim: o líquido previsto sobe quando ele termina; e "acabou" tira as parcelas agendadas
+const S6 = M.emptyState(); S6.config.setupDone = true; S6.groups = pl.groups; S6.items = pl.items; const c6 = M.newAccount({ nature: 'debito', name: 'Conta Exemplo' }); S6.accounts.push(c6);
+H.applySlipPlan(S6, H.buildSlipPlan(S6, [h1]), '2026-02-10'); const l6 = S6.loans[0], r6 = S6.rec[0];
+const fc = m => S6.tx.find(t => t.recId === r6.id && t.recM === m).amount;
+H.setLoanParc(S6, l6.id, 23, 24, '2026-01', '2026-02-10');
+assert.equal(S6.tx.filter(t => t.loanId === l6.id && t.prev).length, 1); assert.deepEqual([fc('2026-03'), fc('2026-04'), fc('2026-09')], [4850, 5250, 5250], 'última parcela em fev; a partir do contracheque de março o líquido sobe 400');
+assert.equal(H.adjustForecast(S6, true), 0);
+H.setLoanParc(S6, l6.id, 5, 24, '2026-01', '2026-02-10'); assert.equal(fc('2026-04'), 4850);
+H.closeLoan(S6, l6.id, '2026-02-10'); assert.equal(S6.tx.filter(t => t.loanId === l6.id && t.prev).length, 0); assert.equal(H.loanInfo(S6, l6).ended, true); assert.deepEqual([fc('2026-03'), fc('2026-12')], [5250, 5250]);
+assert.equal(S6.tx.filter(t => t.folha && t.prev).length, 24, 'os outros descontos continuam previstos');
+H.applySlipPlan(S6, H.buildSlipPlan(S6, [h2]), '2026-03-10'); assert.equal(H.loanInfo(S6, l6).ended, false, 'a rubrica voltou num contracheque mais novo: a dívida reabre'); assert.equal(l6.closed, undefined);
 const before = S.tx.length; const sl = H.slipsOf(S, job.id)[0];
 assert.equal(H.removeSlip(S, sl.id), 4); assert.equal(S.tx.length, before - 4); assert.equal(S.slips.length, 5);
 const A = M.clone(S), B = M.clone(S);
 H.applySlipPlan(B, H.buildSlipPlan(B, [h1]));
 const mg = M.merge(A, B); assert.equal(mg.slips.length, 6); assert.equal(mg.jobs.length, 1); assert.equal(mg.tx.filter(t => t.slipId === sl.id).length, 4, 'reimportado em outro aparelho depois da exclusão');
-H.removeJob(S, job.id); assert.equal(S.jobs.length, 0); assert.equal(S.slips.length, 0); assert.equal(S.tx.filter(t => t.slipId || t.recId).length, 0);
+H.removeJob(S, job.id); assert.equal(S.jobs.length, 0); assert.equal(S.slips.length, 0); assert.equal(S.tx.filter(t => t.slipId || t.recId || t.folha).length, 0); assert.equal(S.loans.length, 0);
 
 // ---------- investimentos ----------
 const I = M.emptyState(); I.config.setupDone = true; I.groups = pl.groups; I.items = pl.items;

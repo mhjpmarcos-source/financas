@@ -7,11 +7,15 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.9.0.** Novidades:
+**Versão atual: 0.9.1.** Novidades:
+- **0.9.1:**
+  - **Pago pela folha, sem conta:** os descontos do contracheque que são gastos da pessoa (plano de saúde, sindicato, consignado) deixam de ficar presos à conta do salário. São despesas pagas pela folha, registradas mesmo quando o líquido não é lançado em nenhuma conta, e os meses seguintes já ficam previstos.
+  - **Consignado é uma dívida:** aparece em Agenda › Dívidas, em "Eu devo", com credor, parcela, total, término e quanto falta. Cada contracheque quita uma parcela; as seguintes ficam agendadas até a última. Dá para corrigir a parcela e o total, e marcar que o empréstimo acabou (quitação, refinanciamento, portabilidade).
+  - **Líquido previsto sobe sozinho** no mês seguinte ao fim de cada consignado.
 - **0.9.0:**
   - **Contracheque (PDF):** importado pelo mesmo botão Importar, um ou vários de uma vez. O leitor é genérico: acha a linha de totais pela conta (bruto − descontos = líquido), separa proventos e descontos pela posição e confere a soma. A receita entra pelo **líquido**, na data de crédito. Cada rubrica é classificada como fixa, eventual ou imposto (pelo nome e pelo histórico; dá para corrigir na revisão, e a escolha vale para os próximos).
-  - **Descontos em folha:** os que são gastos da pessoa (consignado, plano de saúde, sindicato) aparecem como despesa na categoria, sem mexer no saldo, porque o líquido já veio sem eles. No resumo do mês o mesmo valor entra na receita e na despesa.
-  - **Consignados:** o número da parcela (ex.: 17 de 36) é lido do contracheque, com data de término e valor que falta. Dá para corrigir à mão a parcela e o total, na revisão ou em Agenda › Fixas e parcelas › Renda do emprego.
+  - **Descontos em folha:** os que são gastos da pessoa aparecem como despesa na categoria, sem mexer no saldo, porque o líquido já veio sem eles. No resumo do mês o mesmo valor entra na receita e na despesa.
+  - **Consignados:** o número da parcela (ex.: 17 de 36) é lido do contracheque e pode ser corrigido à mão (ver 0.9.1).
   - **Piso previsto:** os próximos meses ficam previstos com o líquido esperado num mês sem eventuais, recalculado a cada contracheque, com a lista do que mudou no fixo.
   - **Investimentos:** conta de investimento fica fora do "Saldo hoje"; mandar dinheiro para ela é transferência (não é despesa); "Atualizar valor de hoje" registra o rendimento sem entrar nas receitas do mês. Ao importar um extrato, aplicações e resgates são sugeridos como transferência para a conta de investimento.
   - **Como chegamos neste valor:** tocar numa conta mostra o saldo linha a linha (saldo inicial, entradas, saídas, transferências, faturas) e o que ainda está pendente até o fim do mês.

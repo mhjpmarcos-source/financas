@@ -7,9 +7,11 @@
 
    Como entra no app:
    - a receita é o LÍQUIDO, na data de crédito (bate com o extrato do banco);
-   - descontos que são gastos da pessoa (consignado, plano de saúde, sindicato) viram despesas "em folha":
-     aparecem nas categorias, mas não mexem no saldo (o líquido já veio sem eles). No resumo do mês o mesmo
-     valor entra como receita e como despesa, para o resultado continuar igual ao que passou pela conta;
+   - descontos que são gastos da pessoa (plano de saúde, sindicato, consignado) viram despesas PAGAS PELA FOLHA:
+     aparecem nas categorias, sem conta nenhuma (o líquido já veio sem eles). No resumo do mês o mesmo valor
+     entra como receita e como despesa, para o resultado continuar igual ao que passou pela conta;
+   - o empréstimo consignado é uma DÍVIDA (coleção loans, folha: true): credor, parcela, total e término. Cada
+     contracheque quita uma parcela e as seguintes ficam agendadas até o fim; não depende de conta bancária;
    - a previsão dos meses seguintes é o piso fixo (proventos fixos − descontos fixos − impostos de um mês sem
      eventuais), corrigido a cada contracheque. */
 import * as M from '../model.js';
@@ -156,14 +158,21 @@ export function parcOf(r) {
   return { i, n: n >= i ? n : 0 };
 }
 
-/* parcela que vale: a correção feita à mão (job.parc[rubrica] = {i, n, asOf: 'AAAA-MM'}) anda um número por mês a partir
-   do mês em que foi informada; sem correção, vale o que o contracheque traz. */
+/* a dívida consignada guarda uma âncora (i0 = número da parcela no mês asOf; n = total, 0 se não informado) e a contagem anda
+   um número por mês. A âncora vem do contracheque mais recente ou da correção feita à mão (manual: true). */
 const monthsBetween = (a, b) => (+b.slice(0, 4) * 12 + +b.slice(5, 7)) - (+a.slice(0, 4) * 12 + +a.slice(5, 7));
-export function effParc(job, r, month) {
-  const ov = job && job.parc && job.parc[rubKey(r)];
-  if (ov && ov.i && month) { const i = ov.i + monthsBetween(ov.asOf, month); return i >= 1 && (!ov.n || i <= ov.n) ? { i, n: ov.n || 0, manual: true } : null; }
-  return parcOf(r);
+export const loanIdOf = (jobId, key) => 'l_' + M.hashStr(jobId + '|' + key);
+export function loanParcAt(loan, month) {
+  if (!loan || !loan.i0 || !loan.asOf || !month) return null;
+  const i = loan.i0 + monthsBetween(loan.asOf, month);
+  return i >= 1 && (!loan.n || i <= loan.n) ? { i, n: loan.n || 0, manual: !!loan.manual } : null;
 }
+/* parcela de uma rubrica de empréstimo num mês: pela dívida, se ela já existe; senão, pelo que o contracheque traz */
+export function loanParcOf(S, jobId, r, month) {
+  const loan = (S.loans || []).find(l => l.id === loanIdOf(jobId, rubKey(r)));
+  return (loan && loan.i0 ? loanParcAt(loan, month) : null) || parcOf(r);
+}
+const folhaId = (jobId, key, m) => `t_f_${M.hashStr(jobId + '|' + key)}_${m.replace('-', '')}`;
 const parcText = p => p ? ` (${p.i}${p.n ? '/' + p.n : ''})` : '';
 
 /* categoria sugerida para um desconto que é gasto da pessoa; '' = não contar como despesa */
@@ -255,14 +264,87 @@ export function slipDiff(before, cur) {
   return out;
 }
 
-/* consignados em andamento, pelo último contracheque mensal */
-export function loansOf(S, jobId) {
+/* situação de uma dívida consignada: parcela atual (no último mês com contracheque), quanto falta e quando termina */
+export function loanInfo(S, loan) {
+  const real = S.tx.filter(t => t.loanId === loan.id && !t.prev).sort((a, b) => (a.folhaM < b.folhaM ? -1 : 1));
+  const asOf = real.length ? real[real.length - 1].folhaM : loan.asOf || '';
+  const p = loanParcAt(loan, asOf), left = loan.end ? 0 : p && p.n ? p.n - p.i : null;
+  return { id: loan.id, key: loan.rk, jobId: loan.jobId, desc: loan.person, v: loan.parcel || 0, i: p ? p.i : null, n: p && p.n ? p.n : null, left, asOf,
+    end: loan.end || (left != null ? mAdd(asOf, left) : ''), ended: !!loan.end || left === 0, rest: left != null ? r2(left * (loan.parcel || 0)) : null,
+    manual: !!loan.manual, paidN: real.length, paid: r2(real.reduce((s, t) => s + t.amount, 0)) };
+}
+export const loansOf = (S, jobId) => (S.loans || []).filter(l => l.folha && (!jobId || l.jobId === jobId)).map(l => loanInfo(S, l)).sort((a, b) => a.ended - b.ended);
+/* outros descontos fixos pagos pela folha (plano de saúde, sindicato…), pelo último contracheque mensal */
+export function folhaFixed(S, jobId) {
   const last = normalSlips(S, jobId).pop(); if (!last) return [];
-  const job = (S.jobs || []).find(j => j.id === jobId);
-  return last.rubs.filter(r => r.col === 'D' && LOAN.test(nrm(r.desc))).map(r => {
-    const p = effParc(job, r, slipMonth(last)), left = p && p.n ? p.n - p.i : null;
-    return { key: rubKey(r), manual: !!(p && p.manual), desc: r.desc, v: r.v, i: p ? p.i : null, n: p && p.n ? p.n : null, left, end: left != null ? mAdd(slipMonth(last), left) : '', rest: left != null ? r2(left * r.v) : null, asOf: slipMonth(last) };
+  return last.rubs.filter(r => r.col === 'D' && r.kind === 'fix' && r.exp && !LOAN.test(nrm(r.desc))).map(r => ({ desc: r.desc, v: r.v, itemId: r.exp }));
+}
+
+/* depois de aplicar contracheques: atualiza as dívidas consignadas pelo último contracheque mensal e agenda os descontos
+   em folha dos meses seguintes (consignado: até a última parcela; os demais: 12 meses), como previstos. */
+function syncFolha(S, job, edits, today) {
+  if (!S.loans) S.loans = [];
+  const normals = normalSlips(S, job.id), last = normals[normals.length - 1];
+  if (!last) { S.tx.filter(t => t.folha && t.jobId === job.id && t.prev).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id)); return; }
+  const lm = slipMonth(last), day = Math.min(28, Math.max(1, +last.credito.slice(8, 10)));
+  const mk = (key, r) => { let l = S.loans.find(x => x.id === loanIdOf(job.id, key)); if (!l) { l = { id: loanIdOf(job.id, key), dir: 'out', folha: true, jobId: job.id, rk: key, person: r ? r.desc : '', desc: 'Consignado', accountId: '', itemId: '', total: 0, n: 0, created: Date.now(), upd: 0 }; S.loans.push(l); } return l; };
+  // correções feitas na revisão
+  edits.forEach(e => { const l = mk(e.key, e); if (e.pi > 0) Object.assign(l, { i0: e.pi, n: e.pn || 0, asOf: e.pm, manual: true }); else delete l.manual; revive(S, l); });
+  const active = new Map();
+  last.rubs.filter(r => r.col === 'D' && r.kind === 'fix' && LOAN.test(nrm(r.desc))).forEach(r => {
+    const key = rubKey(r), l = mk(key, r), p = parcOf(r);
+    if (l.closed && l.closed >= lm) { l.end = l.end || lm; return; } // a pessoa marcou como quitado; um contracheque mais novo com a rubrica reabre
+    delete l.closed;
+    if (!l.manual && p) Object.assign(l, { i0: p.i, asOf: lm, n: p.n || l.n || 0 });
+    Object.assign(l, { person: r.desc, parcel: r.v, itemId: r.exp || l.itemId || '' }); delete l.end;
+    revive(S, l); active.set(key, l);
   });
+  // consignado que não veio no último contracheque: encerrado no último mês em que apareceu
+  S.loans.filter(l => l.folha && l.jobId === job.id && !active.has(l.rk) && !l.end).forEach(l => {
+    const seen = normals.filter(x => x.rubs.some(r => rubKey(r) === l.rk)).pop();
+    l.end = seen ? slipMonth(seen) : lm; revive(S, l);
+  });
+  // agenda dos meses seguintes
+  const want = new Map();
+  last.rubs.filter(r => r.col === 'D' && r.kind === 'fix' && r.exp).forEach(r => {
+    const key = rubKey(r), l = active.get(key), p = l && loanParcAt(l, lm);
+    if (!l && LOAN.test(nrm(r.desc))) return; // consignado que a pessoa encerrou
+    const count = l ? (p && p.n ? Math.min(120, p.n - p.i) : 12) : 12;
+    for (let k = 1; k <= count; k++) { const m = mAdd(lm, k); want.set(folhaId(job.id, key, m), { r, key, m, l }); }
+  });
+  want.forEach((w, id) => {
+    let d = S.tx.find(t => t.id === id);
+    if (d && !d.prev) return; // já tem o desconto real desse mês
+    if (!d) { d = M.newTx({ type: 'deb', date: today, accountId: '', itemId: w.r.exp, amount: w.r.v, desc: w.r.desc, status: 'pend', origin: 'previsao' }); d.id = id; S.tx.push(d); }
+    const cm = mAdd(w.m, 1), date = cm + '-' + String(Math.min(day, lastDay(cm))).padStart(2, '0');
+    const f = { date, accountId: '', itemId: w.r.exp, amount: w.r.v, status: 'pend', prev: true, folha: true, folhaItem: job.itemId, jobId: job.id, rk: w.key, folhaM: w.m };
+    if (Object.keys(f).some(k => d[k] !== f[k]) || (w.l ? d.loanId !== w.l.id : d.loanId)) { Object.assign(d, f); if (w.l) d.loanId = w.l.id; else delete d.loanId; revive(S, d); }
+  });
+  S.tx.filter(t => t.folha && t.jobId === job.id && t.prev && !want.has(t.id)).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+  relabelLoans(S, job.id);
+}
+/* descrição das parcelas com o número (17/36), pela âncora da dívida */
+function relabelLoans(S, jobId) {
+  let c = 0;
+  (S.loans || []).filter(l => l.folha && l.jobId === jobId).forEach(l => S.tx.filter(t => t.loanId === l.id).forEach(t => {
+    const p = loanParcAt(l, t.folhaM), desc = l.person + parcText(p);
+    if (t.desc !== desc) { t.desc = desc; M.touch(t); c++; }
+  }));
+  return c;
+}
+/* quando um consignado termina, o líquido previsto dos meses seguintes sobe o valor da parcela.
+   Devolve quantos meses previstos mudaram (dry = só conta). */
+export function adjustForecast(S, dry = false) {
+  let c = 0;
+  (S.jobs || []).forEach(job => {
+    const rule = job.recId && (S.rec || []).find(r => r.id === job.recId); if (!rule) return;
+    const ends = (S.loans || []).filter(l => l.folha && l.jobId === job.id && l.parcel && (l.closed || (!l.end && l.n && l.i0))).map(l => ({ m: l.closed || mAdd(l.asOf, l.n - l.i0), v: l.parcel }));
+    S.tx.filter(t => t.recId === rule.id && t.prev).forEach(t => {
+      const comp = mAdd(t.recM, -1), amt = r2(rule.amount + ends.filter(e => e.m < comp).reduce((s, e) => s + e.v, 0));
+      if (Math.abs(t.amount - amt) > 0.004) { c++; if (!dry) { t.amount = amt; M.touch(t); } }
+    });
+  });
+  return c;
 }
 
 /* ---------- plano de importação (um ou vários contracheques do mesmo empregador) ---------- */
@@ -303,7 +385,7 @@ export function buildSlipPlan(S, parsedList) {
     const key = rubKey(r);
     if (!rubs.has(key)) { const c = classifyRub(S, job, r, seq); rubs.set(key, { key, desc: r.desc, col: r.col, kind: c.kind, exp: c.exp, how: c.how, n: 0, last: 0, loan: !!parcOf(r) || LOAN.test(nrm(r.desc)) }); }
     const x = rubs.get(key); x.n++; x.last = r.v; x.desc = r.desc;
-    if (x.loan && s.h.tipo === 'normal') { const p = effParc(job, r, slipMonth(s.h)); x.pi = p ? p.i : 0; x.pn = p ? p.n : 0; x.pm = slipMonth(s.h); }
+    if (x.loan && s.h.tipo === 'normal') { const p = loanParcOf(S, jobId, r, slipMonth(s.h)), raw = parcOf(r); x.pi = p ? p.i : 0; x.pn = p ? p.n : 0; x.pm = slipMonth(s.h); x.rawI = raw ? raw.i : 0; x.manual = !!(p && p.manual); }
   }));
   return { jobId, job, empregador: emp, slips, rubs: [...rubs.values()], banks, forecast: true, ruleId: (job && job.recId) || '', other, incomeItem: (job && job.itemId) || incomeItem(S, 'normal') };
 }
@@ -337,7 +419,7 @@ export function applySlipPlan(S, plan, today = M.todayISO()) {
   if (!job) { job = { id: plan.jobId, name: plan.empregador, accountId: '', itemId: plan.incomeItem, recId: '', rubs: {}, upd: 0 }; S.jobs.push(job); }
   plan.rubs.forEach(r => { job.rubs[r.key] = { desc: r.desc, col: r.col, kind: r.kind, exp: r.col === 'D' && r.kind === 'fix' ? (r.exp || '') : '' }; });
   job.itemId = plan.incomeItem || job.itemId;
-  plan.rubs.filter(r => r.pedit && r.pm).forEach(r => { job.parc = Object.assign({}, job.parc, { [r.key]: { i: Math.max(0, +r.pi || 0), n: Math.max(0, +r.pn || 0), asOf: r.pm } }); if (!job.parc[r.key].i) delete job.parc[r.key]; });
+  const edits = plan.rubs.filter(r => r.pedit && r.pm).map(r => ({ key: r.key, desc: r.desc, pi: Math.max(0, +r.pi || 0), pn: Math.max(0, +r.pn || 0), pm: r.pm }));
   const kinds = new Map(plan.rubs.map(r => [r.key, r]));
   const name = job.name;
   // dois contracheques creditados no mesmo dia (ex.: salário + adiantamento do 13º) podem ter vindo do extrato como um crédito só:
@@ -366,11 +448,24 @@ export function applySlipPlan(S, plan, today = M.todayISO()) {
     const m = slipMonth(slip), label = `${h.tipo === 'normal' ? 'Salário' : tipoLabel(h.tipo)} ${name} · ${shortM(m)}`;
     const cm = s.credito.slice(0, 7);
     let tx = slip.txId ? S.tx.find(t => t.id === slip.txId) : null;
-    if (!post) { // só histórico: tira os lançamentos que este contracheque tinha criado
-      S.tx.filter(t => t.slipId === slip.id).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+    const itemId = h.tipo === 'normal' ? job.itemId : incomeItem(S, h.tipo);
+    // descontos pagos pela folha contados como despesa: sem conta, não dependem de o líquido ser lançado
+    const keep = new Set();
+    rubs.filter(r => r.col === 'D' && r.exp).forEach(r => {
+      const key = rubKey(r); let id = folhaId(job.id, key, m);
+      const cur = S.tx.find(t => t.id === id); if (cur && cur.slipId && cur.slipId !== slip.id) id += '_' + slip.id.slice(3); // mesma rubrica em duas folhas do mês
+      keep.add(id);
+      let d = S.tx.find(t => t.id === id);
+      if (!d) { d = M.newTx({ type: 'deb', date: s.credito, accountId: '', itemId: r.exp, amount: r.v, desc: r.desc, status: 'liq', origin: 'import' }); d.id = id; S.tx.push(d); }
+      Object.assign(d, { date: s.credito, accountId: '', itemId: r.exp, amount: r.v, desc: r.desc, status: 'liq', origin: 'import', folha: true, folhaItem: itemId, slipId: slip.id, jobId: job.id, rk: key, folhaM: m });
+      if (LOAN.test(nrm(r.desc))) d.loanId = loanIdOf(job.id, key); else delete d.loanId;
+      delete d.prev; revive(S, d); res.folha++;
+    });
+    S.tx.filter(t => t.slipId === slip.id && t.folha && !keep.has(t.id)).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+    if (!post) { // líquido sem conta no app: só o contracheque e os descontos em folha ficam registrados
+      S.tx.filter(t => t.slipId === slip.id && !t.folha).forEach(t => { if (t.impKey) { delete t.slipId; delete t.jobId; M.touch(t); } else M.removeRecord(S, 'tx', t.id); });
       delete slip.txId; revive(S, slip); continue;
     }
-    const itemId = h.tipo === 'normal' ? job.itemId : incomeItem(S, h.tipo);
     const rule = job.recId && (S.rec || []).find(r => r.id === job.recId);
     if (!tx && h.tipo === 'normal' && rule) tx = S.tx.find(t => t.recId === rule.id && t.recM === cm && !t.slipId) || null; // mês da regra do piso (previsto ou confirmado à mão)
     if (!tx) { // já veio do extrato ou foi lançado à mão: mesmo valor, mesma conta, data próxima
@@ -385,17 +480,6 @@ export function applySlipPlan(S, plan, today = M.todayISO()) {
     Object.assign(tx, { amount: h.liq, accountId, status: 'liq', slipId: slip.id, jobId: job.id }); if (!tx.itemId) tx.itemId = itemId;
     delete tx.prev; revive(S, tx);
     slip.txId = tx.id;
-    // descontos em folha contados como despesa: mesmo dia, não mexem no saldo
-    const want = rubs.filter(r => r.col === 'D' && r.exp);
-    const keep = new Set();
-    want.forEach((r, i) => {
-      const id = `t_${slip.id}_${i}`, p = effParc(job, r, m); keep.add(id);
-      let d = S.tx.find(t => t.id === id);
-      if (!d) { d = M.newTx({ type: 'deb', date: s.credito, accountId, itemId: r.exp, amount: r.v, desc: '', status: 'liq', origin: 'import' }); d.id = id; S.tx.push(d); }
-      Object.assign(d, { date: s.credito, accountId, itemId: r.exp, amount: r.v, desc: r.desc + parcText(p), status: 'liq', folha: true, folhaItem: tx.itemId, slipId: slip.id, jobId: job.id, rk: rubKey(r) });
-      revive(S, d); res.folha++;
-    });
-    S.tx.filter(t => t.slipId === slip.id && t.folha && !keep.has(t.id)).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
     revive(S, slip);
   }
   // previsão: piso a partir do mês seguinte ao crédito do último contracheque mensal
@@ -420,35 +504,51 @@ export function applySlipPlan(S, plan, today = M.todayISO()) {
     M.editRec(S, rule, { amount: P.piso, day, accountId: last.accountId, itemId: job.itemId }, mAdd(cm, 1));
     M.ensureRecurring(S, today);
   }
+  // correções guardadas no formato da 0.9.0 (job.parc) passam para a dívida
+  Object.entries(job.parc || {}).forEach(([key, v]) => { if (v && v.i && !edits.some(e => e.key === key)) edits.push({ key, desc: (job.rubs[key] || {}).desc || '', pi: v.i, pn: v.n || 0, pm: v.asOf }); });
+  delete job.parc;
+  syncFolha(S, job, edits, today);
+  adjustForecast(S);
   revive(S, job);
   return res;
 }
 
-/* correção manual da parcela de um consignado: i = parcela no mês asOf, n = total (0 = não informado; i = 0 apaga a correção).
-   Atualiza a descrição dos descontos em folha já lançados. */
-export function setLoanParc(S, jobId, key, i, n, asOf) {
-  const job = (S.jobs || []).find(j => j.id === jobId); if (!job) return 0;
-  job.parc = Object.assign({}, job.parc);
-  if (i > 0) job.parc[key] = { i: Math.round(i), n: Math.max(0, Math.round(n || 0)), asOf }; else delete job.parc[key];
-  M.touch(job);
-  let c = 0;
-  slipsOf(S, jobId).forEach(sl => sl.rubs.filter(r => rubKey(r) === key).forEach(r => {
-    const d = S.tx.find(t => t.slipId === sl.id && t.folha && t.rk === key); if (!d) return;
-    const desc = r.desc + parcText(effParc(job, r, slipMonth(sl)));
-    if (d.desc !== desc) { d.desc = desc; M.touch(d); c++; }
-  }));
-  return c;
+/* correção manual da dívida consignada: i = parcela no mês asOf, n = total (0 = não informado); i = 0 volta a valer o que o
+   contracheque informa. Reagenda as parcelas futuras e corrige as descrições. Devolve quantos lançamentos mudaram. */
+export function setLoanParc(S, loanId, i, n, asOf, today = M.todayISO()) {
+  const l = (S.loans || []).find(x => x.id === loanId); if (!l) return 0;
+  const job = (S.jobs || []).find(j => j.id === l.jobId); if (!job) return 0;
+  if (i > 0) Object.assign(l, { i0: Math.round(i), n: Math.max(0, Math.round(n || 0)), asOf, manual: true }); else { delete l.manual; l.i0 = 0; l.n = 0; }
+  M.touch(l);
+  const before = new Map(S.tx.filter(t => t.loanId === l.id).map(t => [t.id, t.desc]));
+  syncFolha(S, job, [], today); adjustForecast(S);
+  return S.tx.filter(t => t.loanId === l.id && before.get(t.id) !== t.desc).length + [...before.keys()].filter(id => !S.tx.some(t => t.id === id)).length;
 }
 
 /* exclui um contracheque guardado e os lançamentos que ele criou */
-export function removeSlip(S, slipId) {
+/* a pessoa informa que o consignado acabou (quitou, refinanciou, fez portabilidade): tira as parcelas agendadas */
+export function closeLoan(S, loanId, today = M.todayISO()) {
+  const l = (S.loans || []).find(x => x.id === loanId), job = l && (S.jobs || []).find(j => j.id === l.jobId); if (!job) return;
+  const last = normalSlips(S, job.id).pop(); if (!last) return;
+  l.closed = slipMonth(last); l.end = l.closed; M.touch(l);
+  syncFolha(S, job, [], today); adjustForecast(S);
+}
+function dropSlip(S, slipId) {
   const ids = S.tx.filter(t => t.slipId === slipId).map(t => t.id);
   ids.forEach(id => M.removeRecord(S, 'tx', id));
   M.removeRecord(S, 'slips', slipId);
   return ids.length;
 }
+export function removeSlip(S, slipId, today = M.todayISO()) {
+  const sl = (S.slips || []).find(x => x.id === slipId), job = sl && (S.jobs || []).find(j => j.id === sl.jobId);
+  const n = dropSlip(S, slipId);
+  if (job) { syncFolha(S, job, [], today); adjustForecast(S); }
+  return n;
+}
 export function removeJob(S, jobId) {
-  slipsOf(S, jobId).forEach(s => removeSlip(S, s.id));
+  slipsOf(S, jobId).forEach(s => dropSlip(S, s.id));
+  S.tx.filter(t => t.folha && t.jobId === jobId).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id)); // descontos agendados
+  (S.loans || []).filter(l => l.folha && l.jobId === jobId).map(l => l.id).forEach(id => M.removeRecord(S, 'loans', id));
   const job = (S.jobs || []).find(j => j.id === jobId);
   const rule = job && job.recId && (S.rec || []).find(r => r.id === job.recId);
   if (rule) M.removeRec(S, rule);

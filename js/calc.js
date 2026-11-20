@@ -226,7 +226,7 @@ export function search(S, q) {
 export function pendings(S, until) {
   const out = [];
   S.tx.forEach(t => {
-    if (t.status !== 'pend' || !['rec', 'deb'].includes(t.type)) return;
+    if (t.status !== 'pend' || !['rec', 'deb'].includes(t.type) || t.folha) return; // desconto em folha agendado não é conta a pagar
     if (until && t.date > until) return;
     out.push({ kind: 'tx', date: t.date, amount: t.amount, dir: t.type === 'rec' ? 'in' : 'out', tx: t });
   });

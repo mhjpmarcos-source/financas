@@ -33,13 +33,18 @@ await p.click('#sl-go'); await wait(1500);
 let d = drive.current();
 assert.equal(d.jobs.length, 1); assert.equal(d.slips.length, 1);
 const sal = d.tx.find(t => t.slipId && t.type === 'rec'); assert.deepEqual([sal.amount, sal.date, sal.status], [4850, '2026-02-05', 'liq']);
-assert.equal(d.tx.filter(t => t.folha).length, 3); assert.equal(d.tx.find(t => t.folha && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (6/24)');
-assert.deepEqual(Object.values(d.jobs[0].parc)[0], { i: 6, n: 24, asOf: '2026-01' });
+assert.equal(d.tx.filter(t => t.folha && !t.prev).length, 3); assert.equal(d.tx.find(t => t.folha && !t.prev && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (6/24)');
+assert(d.tx.filter(t => t.folha).every(t => t.accountId === ''), 'pago pela folha: sem conta');
+assert.equal(d.loans.length, 1); assert.deepEqual([d.loans[0].folha, d.loans[0].i0, d.loans[0].n, d.loans[0].asOf, d.loans[0].manual, d.loans[0].parcel], [true, 6, 24, '2026-01', true, 400]);
+assert.equal(d.tx.filter(t => t.loanId === d.loans[0].id && t.prev).length, 18, 'parcelas seguintes agendadas até a 24');
 assert.equal(d.rec.length, 1); assert.equal(d.rec[0].amount, 4850);
 assert.equal(await p.textContent('.month b'), 'Fevereiro de 2026');
 const kp = await p.$$eval('.kpi b', l => l.map(x => x.textContent.replace(/\s/g, ' ')));
 assert.deepEqual(kp, ['R$ 5.500,00', 'R$ 650,00', 'R$ 4.850,00'], 'líquido + descontos em folha na receita; descontos na despesa; resultado = líquido');
-assert.match(await p.textContent('#page'), /descontados em folha/); assert.match(await p.textContent('#page'), /em folha/);
+assert.match(await p.textContent('#page'), /pagos pela folha \(não passam por conta\)/); assert.match(await p.textContent('#page'), /pago pela folha/);
+// tocar numa despesa paga pela folha abre a consulta (não há conta para editar)
+await p.locator('li[data-tx]', { hasText: 'Empréstimo Banco Exemplo 1' }).click(); await p.waitForSelector('#ft-close');
+assert.match(await p.textContent('#sheet'), /não passa por nenhuma conta/); await p.click('#ft-close');
 await p.screenshot({ path: shot('cc-lancamentos') });
 // o desconto em folha não mexe no saldo
 const bal = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); const a = s.accounts.find(x => x.nature === 'debito'); a.initialDate = '2025-12-31'; return c.balances(s, '2026-02-28', true)[a.id] - a.initial; });
@@ -53,11 +58,21 @@ assert.match(await p.textContent('[data-lp]'), /parcela 6 de 24 · faltam 18 · 
 await p.screenshot({ path: shot('cc-renda') });
 await p.click('[data-lp]'); await p.waitForSelector('#lp-save');
 await p.fill('#lp-i', '7'); await p.fill('#lp-n', '30'); assert.match(await p.textContent('#lp-prev'), /Faltam 23/);
-await p.click('#lp-save'); await p.waitForSelector('[data-lp]'); await wait(1300);
-assert.match(await p.textContent('[data-lp]'), /parcela 7 de 30/);
-d = drive.current(); assert.equal(d.tx.find(t => t.folha && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (7/30)');
-await p.click('[data-slip]'); await p.waitForSelector('#sd-back'); assert.match(await p.textContent('#sheet'), /Empréstimo Banco Exemplo 1 \(7\/30\)/); assert.match(await p.textContent('#sheet'), /despesa em Parcela de empréstimo/);
+await p.click('#lp-save'); await wait(1500);
+assert.match(await p.textContent('#sheet'), /parcela 7 de 30 · faltam 23 · termina em dez\/27 · corrigida por você/); assert.match(await p.textContent('#sheet'), /R\$\s9\.200,00/);
+await p.screenshot({ path: shot('cc-consignado') });
+await p.click('#lp-cancel'); await p.waitForSelector('[data-lp]'); assert.match(await p.textContent('[data-lp]'), /parcela 7 de 30/);
+assert.match(await p.textContent('#sheet'), /Outros descontos pagos pela folha/);
+d = drive.current(); assert.equal(d.tx.find(t => t.folha && !t.prev && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (7/30)'); assert.equal(d.tx.filter(t => t.loanId && t.prev).length, 23);
+await p.click('[data-slip]'); await p.waitForSelector('#sd-back'); assert.match(await p.textContent('#sheet'), /Empréstimo Banco Exemplo 1 \(7\/30\)/); assert.match(await p.textContent('#sheet'), /paga pela folha em Parcela de empréstimo/);
 await p.click('#sd-back'); await p.click('#jb-close');
+// o consignado aparece junto das outras dívidas, em "Eu devo"
+await p.click('#agseg [data-v=loans]');
+assert.match(await p.textContent('[data-loan]'), /Empréstimo Banco Exemplo 1/); assert.match(await p.textContent('[data-loan]'), /pago pela folha · parcela 7 de 30/); assert.match(await p.textContent('[data-loan]'), /R\$\s9\.200,00/);
+await p.screenshot({ path: shot('cc-dividas') });
+await p.click('[data-loan]'); await p.waitForSelector('#lp-save'); await p.click('#lp-cancel');
+const pf = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); return c.pendings(s).filter(x => x.kind === 'tx' && x.tx.folha).length; });
+assert.equal(pf, 0, 'parcela agendada na folha não entra em contas a pagar');
 
 // ---------- dois de uma vez: eventual não muda o piso; reajuste muda ----------
 await p.click('[data-tab=lanc]');
@@ -110,8 +125,8 @@ await p.click('#a-cancel');
 await p.click('[data-tab=resumo]');
 assert.match(await p.textContent('#rs-inv'), /Investido no mês: R\$\s300,00 \(aportes R\$\s500,00 − resgates R\$\s200,00\)/); // março, mês do extrato importado
 const flow = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); return c.invFlow(s, new Date().toISOString().slice(0, 7)).net; }); assert.equal(flow, 800);
-const sum = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); const m = new Date().toISOString().slice(0, 7); return c.monthSummary(s, m).desp; });
-assert.equal(sum, 0);
+const sum = await p.evaluate(async () => { const c = await import('./js/calc.js'); const s = (await import('./js/sync.js')).state(); const m = new Date().toISOString().slice(0, 7); const x = c.monthSummary(s, m); return [x.desp - x.folha, x.folha]; });
+assert.deepEqual(sum, [0, 650], 'no mês atual só há o que a folha paga (previsto)');
 assert.equal(JSON.stringify(drive.current()).includes('00.000.000'), false, 'CNPJ do contracheque não é guardado');
 console.log('erros:', errs.join('\n') || 'nenhum'); assert.equal(errs.length, 0);
 await browser.close(); console.log('E2E contracheque OK');

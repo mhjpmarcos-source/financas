@@ -12,7 +12,7 @@ import * as IP from './imp/plan.js';
 import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 
-export const VERSION = '0.9.0';
+export const VERSION = '0.9.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -362,7 +362,7 @@ function txRow(t, showDate) {
   const sub = [showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) : '', t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
   const rk = t.recId && (S().rec || []).find(r => r.id === t.recId);
   const tags = (t.seriesId ? `<span class="tag info">${t.seriesIdx}/${t.seriesN}</span>` : '') + (t.parcKey ? `<span class="tag info">${t.parcI}/${t.parcN}</span>` : '') + (rk ? `<span class="tag info">${rk.kind === 'var' ? 'variável' : 'fixa'}</span>` : '')
-    + (t.folha ? '<span class="tag info">em folha</span>' : '') + (t.adj ? '<span class="tag info">ajuste de valor</span>' : '')
+    + (t.folha ? '<span class="tag info">pago pela folha</span>' : '') + (t.adj ? '<span class="tag info">ajuste de valor</span>' : '')
     + (t.prev ? '<span class="tag">previsto</span>' : t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : '');
   return `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
     <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${tags}</small></span>
@@ -400,7 +400,7 @@ function pageLanc() {
     html += monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
-      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} descontados em folha (não passam pela conta).` : ''}</p>`;
+      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}</p>`;
     if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
     else {
       let day = '';
@@ -443,6 +443,7 @@ function openSheet(html, bind) {
 function closeSheet() { const sh = $('#sheet'); sh.hidden = true; sh.innerHTML = ''; }
 
 function txSheet(tx, preset) {
+  if (tx && tx.folha) return folhaTxSheet(tx);
   if ((tx && tx.cardPay) || (!tx && preset && preset.type === 'pgto')) return payFaturaSheet(tx, preset || {});
   const st = S();
   const hasCards = st.accounts.some(a => a.nature === 'credito' && a.active !== false);
@@ -452,8 +453,7 @@ function txSheet(tx, preset) {
     const defDate = tx ? tx.date : (ui.month === M.todayISO().slice(0, 7) ? M.todayISO() : ui.month + '-01');
     const accSel = tx && tx.type === type ? tx.accountId : (preset && preset.accountId) || '';
     const loanInfo = tx && tx.loanId ? (() => { const l = st.loans.find(x => x.id === tx.loanId); return l ? `<p class="hint">Parte da dívida ${l.dir === 'in' ? 'de' : 'com'} <b>${esc(l.person)}</b>.</p>` : ''; })() : '';
-    const origin = (tx && tx.folha ? '<p class="hint"><b>Desconto em folha:</b> conta como despesa na categoria, mas não sai da conta, porque o salário já foi lançado pelo líquido. É atualizado quando o contracheque é importado de novo.</p>'
-      : tx && tx.adj ? '<p class="hint"><b>Ajuste de valor do investimento:</b> muda o saldo da conta de investimento, sem entrar nas receitas e despesas do mês.</p>'
+    const origin = (tx && tx.adj ? '<p class="hint"><b>Ajuste de valor do investimento:</b> muda o saldo da conta de investimento, sem entrar nas receitas e despesas do mês.</p>'
       : tx && tx.slipId ? '<p class="hint">Líquido do contracheque (Agenda › Fixas e parcelas › Renda do emprego).</p>' : '')
       + (tx && tx.origin === 'import' && !tx.slipId ? `<p class="hint">Importado${tx.rawDesc ? ': ' + esc(tx.rawDesc) : ''}${tx.cardRef ? ' · cartão final ' + esc(tx.cardRef) : ''}.</p>` : '');
     const rule = tx && tx.recId && (st.rec || []).find(r => r.id === tx.recId);
@@ -790,14 +790,14 @@ function slipSheet(list, title) {
       const months = plan.slips.map(s => H.slipMonth(s.h)).sort();
       const accOpts = sel => `<option value="">Não lançar: guardar só o histórico</option>` + st.accounts.filter(a => a.nature === 'debito' && a.active !== false && !a.inv).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
       const slipRow = (s, i) => { const h = s.h, acc = plan.banks[s.banco];
-        return `<li class="irow"><div class="irow-h"><label class="check"><input type="checkbox" data-post="${i}" ${s.post && acc ? 'checked' : ''} ${acc ? '' : 'disabled'} aria-label="Lançar este contracheque"></label>
+        return `<li class="irow"><div class="irow-h"><label class="check"><input type="checkbox" data-post="${i}" ${s.post && acc ? 'checked' : ''} ${acc ? '' : 'disabled'} aria-label="Lançar o líquido na conta"></label>
           <span class="t"><b>${esc(H.tipoLabel(h.tipo))} · ${shortM(H.slipMonth(h))}</b><small>bruto ${C.brl(h.bruto)} · descontos ${C.brl(h.desc)}${s.already ? '<span class="tag info">já importado</span>' : ''}${h.ok ? '' : '<span class="tag">não confere</span>'}</small></span>
           <span class="num pos">${C.brl(h.liq)}</span></div>
           <div class="rgrid"><label>Crédito em <input type="date" data-cred="${i}" value="${esc(s.credito)}"></label></div></li>`; };
       const rubRow = r => `<li class="irow"><div class="irow-h"><span class="t"><b>${esc(r.desc)}</b><small>${n > 1 ? `em ${r.n} de ${n} · ` : ''}${r.how === 'escolha anterior' ? 'como você escolheu antes' : 'sugerido pelo ' + (r.how === 'nome' ? 'nome' : 'histórico')}</small></span><span class="num ${r.col === 'V' ? 'pos' : ''}">${r.col === 'D' ? '−' : ''}${C.brl(r.last)}</span></div>
         <div class="rgrid"><select data-kind="${esc(r.key)}" aria-label="Tipo da rubrica">${(r.col === 'D' ? ['fix', 'ev', 'tax'] : ['fix', 'ev']).map(k => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${KIND_LBL[k]}</option>`).join('')}</select>
         ${r.col === 'D' && r.kind === 'fix' ? `<select data-exp="${esc(r.key)}" aria-label="Contar como despesa"><option value="">Não contar como despesa</option>${optItems('despesa', r.exp)}</select>` : ''}</div>
-        ${r.loan && r.pm ? `<div class="rgrid parc"><label>Parcela <input data-pi="${esc(r.key)}" inputmode="numeric" value="${r.pi || ''}" placeholder="?"></label><label>de <input data-pn="${esc(r.key)}" inputmode="numeric" value="${r.pn || ''}" placeholder="?"></label><small class="hint">em ${shortM(r.pm)}${r.pedit ? ' · corrigida por você' : ''}</small></div>` : ''}</li>`;
+        ${r.loan && r.pm ? `<div class="rgrid parc"><label>Parcela <input data-pi="${esc(r.key)}" inputmode="numeric" value="${r.pi || ''}" placeholder="?"></label><label>de <input data-pn="${esc(r.key)}" inputmode="numeric" value="${r.pn || ''}" placeholder="?"></label><small class="hint">em ${shortM(r.pm)}${r.pedit || r.manual ? ' · corrigida por você' : ''}${!r.pedit && r.manual && r.rawI && r.rawI !== r.pi ? ` · o contracheque informa ${r.rawI}` : ''}</small></div>` : ''}</li>`;
       const group = (k, title, hint, rows) => rows.length ? `<details class="rgroup" data-g="${k}" ${open[k] ? 'open' : ''}><summary>${title} <span class="hint">(${rows.length})</span></summary><p class="hint">${hint}</p><ul class="list irows wrap">${rows.map(rubRow).join('')}</ul></details>` : '';
       const V = plan.rubs.filter(r => r.col === 'V'), Dd = plan.rubs.filter(r => r.col === 'D');
       const chg = D && D.prev ? D.changes.map(c => `<li><span class="grow">${esc(c.desc)}</span><span class="num">${c.what === 'novo' ? 'novo: ' + C.brl(c.v) : c.what === 'saiu' ? 'saiu (era ' + C.brl(c.v) + ')' : `${C.brl(c.from)} → ${C.brl(c.v)}`}</span></li>`).join('') : '';
@@ -809,19 +809,19 @@ function slipSheet(list, title) {
         <p class="${bad ? 'warn' : 'okbox'}">${bad ? `⚠ ${bad === n && n === 1 ? esc(plan.slips[0].h.check.msg) : bad + ' contracheque(s) com soma diferente dos totais impressos: confira antes de aplicar.'}` : `✓ ${n > 1 ? 'Todos conferem: em cada um, as rubricas somam o bruto e os descontos impressos.' : esc(plan.slips[0].h.check.msg)}`}</p>
         ${plan.other ? `<p class="warn">${plan.other} arquivo(s) são de outro empregador e ficaram de fora. Importe-os separadamente.</p>` : ''}
         ${Object.keys(plan.banks).map(b => `<label>Conta onde o líquido cai${b ? ' (' + esc(b) + ')' : ''}</label><select data-bank="${esc(b)}">${accOpts(plan.banks[b])}</select>`).join('')}
-        ${noAcc ? '<p class="hint">Sem conta escolhida, os contracheques ficam guardados só como histórico (servem para a previsão), sem lançamentos.</p>' : ''}
+        ${noAcc ? '<p class="hint">Sem conta escolhida, o líquido não é lançado. Os descontos pagos pela folha e os consignados são registrados do mesmo jeito, porque não dependem de conta.</p>' : ''}
         <details class="rgroup" data-g="slips" ${open.slips ? 'open' : ''}><summary>${n > 1 ? 'Contracheques' : 'Contracheque'} <span class="hint">(${n}${old ? `, ${old} já importado${old > 1 ? 's' : ''}` : ''})</span></summary>
-          <p class="hint">A receita entra pelo <b>líquido</b>, na data de crédito (é o que aparece no extrato do banco).</p><ul class="list irows wrap">${plan.slips.map(slipRow).join('')}</ul></details>
+          <p class="hint">A receita entra pelo <b>líquido</b>, na data de crédito (é o que aparece no extrato do banco). Desmarcado, o líquido não é lançado na conta.</p><ul class="list irows wrap">${plan.slips.map(slipRow).join('')}</ul></details>
         ${chg ? `<div class="card flat"><h2>O que mudou no fixo desde ${shortM(H.slipMonth(D.prev))}</h2><ul class="sublist calc">${chg}</ul></div>` : D && D.prev && lastN ? `<p class="hint">Nada mudou no fixo desde ${shortM(H.slipMonth(D.prev))}.</p>` : ''}
         ${evs && lastN ? `<div class="card flat"><h2>Eventuais de ${shortM(H.slipMonth(lastN.h))}</h2><ul class="sublist calc">${evs}</ul></div>` : ''}
         <h3 class="sub">Rubricas: confira o que é fixo e o que é eventual</h3>
-        ${group('fix', 'Todo mês', 'Entram no piso previsto. Nos descontos, escolha a categoria dos que são gastos seus (empréstimo consignado, plano de saúde, sindicato): eles aparecem como despesa "em folha", sem mexer no saldo, porque o líquido já veio sem eles.', [...V, ...Dd].filter(r => r.kind === 'fix'))}
+        ${group('fix', 'Todo mês', 'Entram no piso previsto. Nos descontos, escolha a categoria dos que são gastos seus (plano de saúde, sindicato, empréstimo consignado): são despesas pagas pela folha, sem passar por conta nenhuma. O consignado vira uma dívida em Agenda › Dívidas, com as parcelas seguintes já agendadas.', [...V, ...Dd].filter(r => r.kind === 'fix'))}
         ${group('ev', 'Eventuais', 'Férias, 13º, horas extras, diferenças e estornos: não entram no piso previsto.', [...V, ...Dd].filter(r => r.kind === 'ev'))}
         ${group('tax', 'Impostos', 'INSS e imposto de renda. Para o piso, valem os de um mês sem eventuais.', Dd.filter(r => r.kind === 'tax'))}
         ${P ? `<div class="card flat"><h2>Piso previsto: <span class="num pos">${C.brl(P.piso)}</span> por mês</h2>
           <p class="hint">Proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}${P.exact ? '' : ' (ainda sem um mês sem eventuais: os impostos podem estar altos)'}. Eventuais ficam de fora e aparecem quando o contracheque chegar.</p>
           <label class="check"><input type="checkbox" id="sl-fc" ${plan.forecast ? 'checked' : ''} ${noAcc ? 'disabled' : ''}> Prever esse valor como receita dos próximos meses (some ou muda quando eu importar o próximo contracheque)</label></div>` : ''}
-        <div class="actions sticky"><button class="btn" id="sl-cancel">Cancelar</button><button class="btn primary" id="sl-go">${noAcc ? 'Guardar histórico' : 'Aplicar'}</button></div>`;
+        <div class="actions sticky"><button class="btn" id="sl-cancel">Cancelar</button><button class="btn primary" id="sl-go">Aplicar</button></div>`;
       panel.scrollTop = top;
     };
     draw();
@@ -847,7 +847,7 @@ function slipSheet(list, title) {
       closeSheet();
       if (posted) { ui.tab = 'lanc'; ui.q = ''; ui.month = posted.credito.slice(0, 7); }
       render();
-      toast(`${res.slips} contracheque(s) guardado(s)${res.created + res.updated ? ` · ${res.created + res.updated} receita(s)` : ''}${res.folha ? ` · ${res.folha} desconto(s) em folha` : ''}${res.piso && plan.forecast && posted ? ` · piso previsto ${C.brl(res.piso.piso)}` : ''}.`);
+      toast(`${res.slips} contracheque(s) guardado(s)${res.created + res.updated ? ` · ${res.created + res.updated} receita(s)` : ''}${res.folha ? ` · ${res.folha} desconto(s) pagos pela folha` : ''}${res.piso && plan.forecast && posted ? ` · piso previsto ${C.brl(res.piso.piso)}` : ''}.`);
     };
   });
 }
@@ -858,60 +858,85 @@ function jobsHTML(st) {
   if (!jobs.length) return `<div class="card"><h2>Renda do emprego</h2><p class="hint">Importe o contracheque em PDF (um ou vários de uma vez): o app lança o líquido, separa o que é fixo do que é eventual, mostra os consignados descontados em folha e prevê os próximos meses pelo piso fixo.</p><button class="link" id="job-imp">Importar contracheque</button></div>`;
   return `<div class="card"><h2>Renda do emprego</h2><ul class="list wrap">${jobs.map(j => {
     const sl = H.slipsOf(st, j.id), P = H.pisoOf(sl.filter(x => x.tipo === 'normal')), last = sl[sl.length - 1], lo = H.loansOf(st, j.id);
-    return `<li data-job="${j.id}"><span class="dot" style="background:#2e9e6b">R</span><span class="t"><b>${esc(j.name)}</b><small>${sl.length} contracheque${sl.length === 1 ? '' : 's'}${last ? ' · último ' + shortM(H.slipMonth(last)) : ''}${lo.length ? ` · ${lo.length} consignado${lo.length > 1 ? 's' : ''} em folha` : ''}</small></span><span class="num pos">${P ? C.brl(P.piso) : ''}</span></li>`;
+    return `<li data-job="${j.id}"><span class="dot" style="background:#2e9e6b">R</span><span class="t"><b>${esc(j.name)}</b><small>${sl.length} contracheque${sl.length === 1 ? '' : 's'}${last ? ' · último ' + shortM(H.slipMonth(last)) : ''}${lo.filter(l => !l.ended).length ? ` · ${lo.filter(l => !l.ended).length} consignado(s)` : ''}</small></span><span class="num pos">${P ? C.brl(P.piso) : ''}</span></li>`;
   }).join('')}</ul><p class="hint">O valor é o piso fixo previsto por mês (sem eventuais).</p><button class="link" id="job-imp">+ Importar contracheque</button></div>`;
 }
-const loanLine = l => l.i ? `parcela ${l.i}${l.n ? ` de ${l.n} · faltam ${l.left} · termina em ${shortM(l.end)}` : ' · total de parcelas não informado'}${l.manual ? ' · corrigida por você' : ''}` : 'parcela não informada';
+const loanLine = l => l.ended ? `✓ encerrado em ${l.end ? shortM(l.end) : '—'}` : l.i ? `parcela ${l.i}${l.n ? ` de ${l.n} · faltam ${l.left} · termina em ${shortM(l.end)}` : ' · total de parcelas não informado'}${l.manual ? ' · corrigida por você' : ''}` : 'parcela não informada';
 function jobSheet(id) {
   const st = S(), job = (st.jobs || []).find(j => j.id === id); if (!job) return;
   const sl = H.slipsOf(st, id), P = H.pisoOf(sl.filter(x => x.tipo === 'normal')), loans = H.loansOf(st, id);
-  const rest = loans.reduce((s, l) => s + (l.rest || 0), 0), month = loans.reduce((s, l) => s + l.v, 0);
+  const rest = loans.reduce((s, l) => s + (l.rest || 0), 0), month = loans.filter(l => !l.ended).reduce((s, l) => s + l.v, 0), others = H.folhaFixed(st, id);
   openSheet(`<h2>${esc(job.name)}</h2>
     ${P ? `<div class="kpis two"><div class="kpi"><small>Piso previsto por mês</small><b class="num pos">${C.brl(P.piso)}</b></div><div class="kpi"><small>Descontado em folha (despesas suas)</small><b class="num neg">${C.brl(P.folha)}</b></div></div>
       <p class="hint">Piso = proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}. É o líquido esperado num mês sem eventuais; a cada contracheque ele é recalculado.</p>` : '<p class="hint">Ainda sem contracheque mensal.</p>'}
-    <h3 class="sub">Consignados descontados em folha</h3>
-    ${loans.length ? `<p class="hint">${C.brl(month)} por mês${rest ? ` · faltam ${C.brl(rest)} nos que informam o total` : ''}. Não saem da conta: o líquido já vem sem eles. Toque para corrigir o número da parcela.</p>
-      <ul class="list wrap">${loans.map(l => `<li data-lp="${esc(l.key)}"><span class="t"><b>${esc(l.desc)}</b><small>${loanLine(l)}</small></span><span class="num">${C.brl(l.v)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhum empréstimo no último contracheque.</p>'}
+    <h3 class="sub">Consignados (dívidas pagas pela folha)</h3>
+    ${loans.length ? `<p class="hint">${C.brl(month)} por mês${rest ? ` · faltam ${C.brl(rest)} nos que informam o total` : ''}. Também aparecem em Agenda › Dívidas e Pix. Toque para ver ou corrigir a parcela.</p>
+      <ul class="list wrap">${loans.map(l => `<li data-lp="${esc(l.id)}"><span class="t"><b>${esc(l.desc)}</b><small>${loanLine(l)}</small></span><span class="num">${C.brl(l.v)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhum empréstimo nos contracheques.</p>'}
+    ${others.length ? `<h3 class="sub">Outros descontos pagos pela folha</h3><p class="hint">Despesas suas que saem direto do contracheque, sem conta. Os próximos 12 meses ficam previstos.</p>
+      <ul class="sublist calc">${others.map(o => `<li><span class="grow">${esc(o.desc)} <small class="hint">${esc((itemById(o.itemId) || {}).name || '')}</small></span><span class="num">${C.brl(o.v)}</span></li>`).join('')}</ul>` : ''}
     <h3 class="sub">Contracheques</h3>
-    <ul class="list wrap">${sl.slice().reverse().map(x => `<li data-slip="${x.id}"><span class="t"><b>${esc(H.tipoLabel(x.tipo))} · ${shortM(H.slipMonth(x))}</b><small>crédito ${C.fmtD(x.credito)}/${x.credito.slice(2, 4)} · bruto ${C.brl(x.bruto)}${x.txId ? '' : ' · só histórico'}</small></span><span class="num pos">${C.brl(x.liq)}</span></li>`).join('') || '<li class="empty">Nenhum.</li>'}</ul>
+    <ul class="list wrap">${sl.slice().reverse().map(x => `<li data-slip="${x.id}"><span class="t"><b>${esc(H.tipoLabel(x.tipo))} · ${shortM(H.slipMonth(x))}</b><small>crédito ${C.fmtD(x.credito)}/${x.credito.slice(2, 4)} · bruto ${C.brl(x.bruto)}${x.txId ? '' : ' · líquido não lançado'}</small></span><span class="num pos">${C.brl(x.liq)}</span></li>`).join('') || '<li class="empty">Nenhum.</li>'}</ul>
     <div class="actions wrap"><button class="btn danger" id="jb-del">Excluir fonte de renda</button><button class="btn" id="jb-close">Fechar</button><button class="btn primary" id="jb-imp">Importar contracheque</button></div>`, panel => {
     panel.classList.add('wide');
     panel.onclick = async e => {
       if (e.target.id === 'jb-close') return closeSheet();
       if (e.target.id === 'jb-imp') { closeSheet(); return pickImportFile({}); }
       if (e.target.id === 'jb-del') {
-        if (!(await confirmBox(`Excluir ${job.name}, os ${sl.length} contracheques guardados, os lançamentos que eles criaram e a previsão do piso?`))) return;
+        if (!(await confirmBox(`Excluir ${job.name}, os ${sl.length} contracheques guardados, os lançamentos que eles criaram, os consignados e a previsão do piso?`))) return;
         await sync.commit(s => H.removeJob(s, id)); closeSheet(); return toast('Fonte de renda excluída.');
       }
-      const lp = e.target.closest('[data-lp]'); if (lp) return loanParcForm(id, loans.find(l => l.key === lp.dataset.lp));
+      const lp = e.target.closest('[data-lp]'); if (lp) return folhaLoanSheet(lp.dataset.lp, id);
       const s1 = e.target.closest('[data-slip]'); if (s1) return slipDetail(s1.dataset.slip);
     };
   });
 }
-/* correção manual do número da parcela e do total de um consignado */
-function loanParcForm(jobId, l) {
-  if (!l) return;
+/* dívida consignada: paga pela folha, sem conta. Mostra a situação e permite corrigir a parcela e o total. */
+function folhaLoanSheet(loanId, backJob) {
+  const st = S(), loan = st.loans.find(x => x.id === loanId); if (!loan) return;
+  const l = H.loanInfo(st, loan), job = (st.jobs || []).find(j => j.id === loan.jobId);
+  const back = () => (backJob ? jobSheet(backJob) : closeSheet());
   openSheet(`<h2>${esc(l.desc)}</h2>
-    <p class="hint">${C.brl(l.v)} por mês, descontado em folha. O contracheque de ${shortM(l.asOf)} ${l.i ? 'indica ' + loanLine({ ...l, manual: false }) : 'não informa a parcela'}. Corrija aqui se o número estiver errado: os meses seguintes continuam a contagem a partir dele.</p>
-    <div class="grid2"><div><label for="lp-i">Parcela em ${shortM(l.asOf)}</label><input id="lp-i" inputmode="numeric" value="${l.i || ''}"></div>
+    <p class="hint">Empréstimo consignado${job ? ' · ' + esc(job.name) : ''}. É pago pela folha: não passa por conta bancária, e cada contracheque quita uma parcela.</p>
+    <div class="kpis two"><div class="kpi"><small>Parcela por mês</small><b class="num neg">${C.brl(l.v)}</b></div><div class="kpi"><small>Falta pagar</small><b class="num">${l.ended ? C.brl(0) : l.rest != null ? C.brl(l.rest) : 'informe o total'}</b></div></div>
+    <p class="hint">${loanLine(l)}${l.paidN ? ` · ${l.paidN} parcela(s) registradas pelos contracheques (${C.brl(l.paid)})` : ''}.${l.rest ? ' "Falta pagar" é a soma das parcelas que faltam; para quitar antes, vale o valor que o banco informar.' : ''}</p>
+    ${l.ended ? '' : `<h3 class="sub">Corrigir a contagem</h3>
+    <div class="grid2"><div><label for="lp-i">Parcela em ${l.asOf ? shortM(l.asOf) : '—'}</label><input id="lp-i" inputmode="numeric" value="${l.i || ''}"></div>
     <div><label for="lp-n">Total de parcelas</label><input id="lp-n" inputmode="numeric" value="${l.n || ''}" placeholder="Não informado"></div></div>
     <p class="hint" id="lp-prev"></p>
-    <div class="actions wrap">${l.manual ? '<button class="btn" id="lp-reset">Voltar ao que o contracheque informa</button>' : ''}<button class="btn" id="lp-cancel">Cancelar</button><button class="btn primary" id="lp-save">Salvar</button></div>`, panel => {
+    <button class="link" id="lp-end">Este empréstimo acabou (quitei, refinanciei ou fiz portabilidade)</button>`}
+    <div class="actions wrap">${l.manual && !l.ended ? '<button class="btn" id="lp-reset">Voltar ao que o contracheque informa</button>' : ''}<button class="btn" id="lp-cancel">${backJob ? 'Voltar' : 'Fechar'}</button>${l.ended ? '' : '<button class="btn primary" id="lp-save">Salvar</button>'}</div>`, panel => {
+    panel.querySelector('#lp-cancel').onclick = back;
+    if (l.ended) return;
     const val = () => ({ i: parseInt(panel.querySelector('#lp-i').value, 10) || 0, n: parseInt(panel.querySelector('#lp-n').value, 10) || 0 });
     const prev = () => { const { i, n } = val(); panel.querySelector('#lp-prev').textContent = i && n && n >= i ? `Faltam ${n - i} parcela(s): termina em ${shortM(C.mAdd(l.asOf, n - i))} · ${C.brl((n - i) * l.v)} a pagar.` : i && n ? 'A parcela não pode ser maior que o total.' : ''; };
     panel.oninput = prev; prev();
-    const save = async (i, n) => { let c = 0; await sync.commit(s => { c = H.setLoanParc(s, jobId, l.key, i, n, l.asOf); }); toast(i ? `Parcela corrigida${c ? ` · ${c} lançamento(s) atualizado(s)` : ''}.` : 'Voltou a valer o que o contracheque informa.'); jobSheet(jobId); };
-    panel.querySelector('#lp-cancel').onclick = () => jobSheet(jobId);
+    const save = async (i, n) => { let c = 0; await sync.commit(s => { c = H.setLoanParc(s, loanId, i, n, l.asOf); }); toast(i ? `Parcela corrigida${c ? ` · ${c} lançamento(s) atualizado(s)` : ''}.` : 'Voltou a valer o que o contracheque informa.'); folhaLoanSheet(loanId, backJob); };
     if (l.manual) panel.querySelector('#lp-reset').onclick = () => save(0, 0);
     panel.querySelector('#lp-save').onclick = () => { const { i, n } = val(); if (!(i >= 1)) return toast('Informe o número da parcela.', true); if (n && i > n) return toast('A parcela não pode ser maior que o total.', true); save(i, n); };
+    panel.querySelector('#lp-end').onclick = async () => {
+      if (!(await confirmBox(`Marcar ${l.desc} como encerrado? As parcelas previstas dos próximos meses são retiradas e o líquido previsto sobe ${C.brl(l.v)}. Se a rubrica voltar num contracheque mais novo, a dívida reabre.`))) return;
+      await sync.commit(s => H.closeLoan(s, loanId)); toast('Empréstimo encerrado.'); folhaLoanSheet(loanId, backJob);
+    };
+  });
+}
+/* despesa paga pela folha (não tem conta): só consulta; muda pela revisão do contracheque */
+function folhaTxSheet(tx) {
+  const st = S(), job = (st.jobs || []).find(j => j.id === tx.jobId), it = itemById(tx.itemId);
+  openSheet(`<h2>${esc(tx.desc)}</h2>
+    <div class="kpis two"><div class="kpi"><small>${tx.prev ? 'Previsto' : 'Descontado'} em ${C.fmtD(tx.date)}/${tx.date.slice(2, 4)}</small><b class="num neg">${C.brl(tx.amount)}</b></div><div class="kpi"><small>Categoria</small><b>${esc(it ? it.name : 'Sem categoria')}</b></div></div>
+    <p class="hint"><b>Pago pela folha</b>${job ? ' de ' + esc(job.name) : ''}${tx.folhaM ? ', contracheque de ' + shortM(tx.folhaM) : ''}. Conta como despesa na categoria, mas não passa por nenhuma conta: o salário já chega líquido. ${tx.prev ? 'É uma previsão; o contracheque do mês confirma o valor.' : 'Para mudar a categoria ou o tipo da rubrica, importe o contracheque de novo e altere na revisão.'}</p>
+    <div class="actions wrap">${tx.loanId ? '<button class="btn" id="ft-loan">Ver o consignado</button>' : ''}${job ? '<button class="btn" id="ft-job">Renda do emprego</button>' : ''}<button class="btn primary" id="ft-close">Fechar</button></div>`, panel => {
+    panel.querySelector('#ft-close').onclick = closeSheet;
+    if (panel.querySelector('#ft-loan')) panel.querySelector('#ft-loan').onclick = () => folhaLoanSheet(tx.loanId);
+    if (panel.querySelector('#ft-job')) panel.querySelector('#ft-job').onclick = () => jobSheet(job.id);
   });
 }
 function slipDetail(slipId) {
   const st = S(), x = (st.slips || []).find(s => s.id === slipId); if (!x) return;
   const job = (st.jobs || []).find(j => j.id === x.jobId);
-  const row = r => { const p = H.effParc(job, r, H.slipMonth(x)); return `<li><span class="grow">${esc(r.desc)}${p ? ` (${p.i}${p.n ? '/' + p.n : ''})` : ''} <small class="hint">${KIND_LBL[r.kind] || ''}${r.exp ? ' · despesa em ' + esc((itemById(r.exp) || {}).name || 'categoria apagada') : ''}</small></span><span class="num ${r.col === 'V' ? 'pos' : ''}">${r.col === 'D' ? '−' : ''}${C.brl(r.v)}</span></li>`; };
+  const row = r => { const p = r.col === 'D' && r.kind === 'fix' ? H.loanParcOf(st, x.jobId, r, H.slipMonth(x)) : null; return `<li><span class="grow">${esc(r.desc)}${p ? ` (${p.i}${p.n ? '/' + p.n : ''})` : ''} <small class="hint">${KIND_LBL[r.kind] || ''}${r.exp ? ' · paga pela folha em ' + esc((itemById(r.exp) || {}).name || 'categoria apagada') : ''}</small></span><span class="num ${r.col === 'V' ? 'pos' : ''}">${r.col === 'D' ? '−' : ''}${C.brl(r.v)}</span></li>`; };
   openSheet(`<h2>${esc(H.tipoLabel(x.tipo))} · ${shortM(H.slipMonth(x))}</h2>
-    <p class="hint">${esc(job ? job.name : '')} · crédito em ${C.fmtD(x.credito)}/${x.credito.slice(0, 4)}${x.accountId && accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ' · só histórico (sem lançamento)'}</p>
+    <p class="hint">${esc(job ? job.name : '')} · crédito em ${C.fmtD(x.credito)}/${x.credito.slice(0, 4)}${x.accountId && accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ' · líquido não lançado em conta'}</p>
     <div class="kpis"><div class="kpi"><small>Bruto</small><b class="num">${C.brl(x.bruto)}</b></div><div class="kpi"><small>Descontos</small><b class="num neg">${C.brl(x.desc)}</b></div><div class="kpi"><small>Líquido</small><b class="num pos">${C.brl(x.liq)}</b></div></div>
     <h3 class="sub">Proventos</h3><ul class="sublist calc">${x.rubs.filter(r => r.col === 'V').map(row).join('')}</ul>
     <h3 class="sub">Descontos</h3><ul class="sublist calc">${x.rubs.filter(r => r.col === 'D').map(row).join('') || '<li>Nenhum.</li>'}</ul>
@@ -920,7 +945,7 @@ function slipDetail(slipId) {
     panel.classList.add('wide');
     panel.querySelector('#sd-back').onclick = () => jobSheet(x.jobId);
     panel.querySelector('#sd-del').onclick = async () => {
-      if (!(await confirmBox('Excluir este contracheque e os lançamentos que ele criou (o líquido e os descontos em folha)?'))) return;
+      if (!(await confirmBox('Excluir este contracheque e os lançamentos que ele criou (o líquido e os descontos pagos pela folha)?'))) return;
       await sync.commit(s => H.removeSlip(s, slipId)); toast('Contracheque excluído.'); jobSheet(x.jobId);
     };
   });
@@ -946,15 +971,16 @@ function pageAgenda() {
       <button class="btn" id="ag-ics">Adicionar vencimentos ao calendário</button></div>`;
     html += `<p class="hint">Contas que se repetem todo mês (aluguel, internet, luz, salário) ficam em <b>Fixas e parcelas</b>, e os meses aparecem aqui.</p>`;
   } else {
-    const loans = st.loans.map(l => ({ l, s: M.loanStatus(st, l) }));
+    const folhaSt = l => { const f = H.loanInfo(st, l); return { folha: f, rest: f.ended ? 0 : f.rest || 0, paid: f.i || 0, total: f.n || 0, parcels: [], doneN: f.paidN, next: null, late: 0 }; };
+    const loans = st.loans.map(l => ({ l, s: l.folha ? folhaSt(l) : M.loanStatus(st, l) }));
     const group = (dir, title) => {
       const list = loans.filter(x => x.l.dir === dir).sort((a, b) => (a.s.rest === 0) - (b.s.rest === 0) || String(a.s.next && a.s.next.date).localeCompare(String(b.s.next && b.s.next.date)));
       const rest = list.reduce((s, x) => s + x.s.rest, 0);
       return `<div class="card"><h2>${title}</h2><p class="hint">Saldo em aberto: <b class="num">${C.brl(rest)}</b></p>
         ${list.length ? `<ul class="list wrap">${list.map(({ l, s }) => `<li data-loan="${l.id}"><span class="t"><b>${esc(l.person || 'Sem nome')}${l.desc ? ' · ' + esc(l.desc) : ''}</b>
-          <small>${s.rest === 0 ? '✓ quitado' : `${s.doneN}/${s.parcels.length} parcelas · próxima ${s.next ? C.fmtD(s.next.date) + '/' + s.next.date.slice(2, 4) : '—'}${s.late ? ` · <span class="tag">${s.late} atrasada(s)</span>` : ''}`}</small>
+          <small>${s.folha ? 'pago pela folha · ' + loanLine(s.folha) : s.rest === 0 ? '✓ quitado' : `${s.doneN}/${s.parcels.length} parcelas · próxima ${s.next ? C.fmtD(s.next.date) + '/' + s.next.date.slice(2, 4) : '—'}${s.late ? ` · <span class="tag">${s.late} atrasada(s)</span>` : ''}`}</small>
           <span class="bar"><i style="width:${s.total ? (s.paid / s.total * 100).toFixed(0) : 0}%;background:var(--brand)"></i></span></span>
-          <span class="num">${C.brl(s.rest)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma.</p>'}
+          <span class="num">${s.folha && !s.folha.ended && s.folha.rest == null ? C.brl(s.folha.v) + '/mês' : C.brl(s.rest)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma.</p>'}
         <button class="link" data-newloan="${dir}">+ ${dir === 'in' ? 'Alguém me deve' : 'Eu devo'}</button></div>`;
     };
     html += `<div class="cols">${group('in', 'Me devem (a receber)')}${group('out', 'Eu devo (a pagar)')}</div>${peopleHTML(st)}`;
@@ -1061,6 +1087,7 @@ function loanForm(dir) {
 
 function loanSheet(id) {
   const l = S().loans.find(x => x.id === id); if (!l) return;
+  if (l.folha) return folhaLoanSheet(id);
   openSheet('', panel => {
     const s = M.loanStatus(S(), l);
     panel.innerHTML = `<h2>${esc(l.person)}</h2><p class="hint">${l.dir === 'in' ? 'Me deve' : 'Eu devo'}${l.desc ? ' · ' + esc(l.desc) : ''}</p>
@@ -1195,7 +1222,7 @@ function pageResumo() {
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
-    <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} descontados em folha.` : ''}</p>
+    <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha.` : ''}</p>
     ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
     <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1)}</div>
     <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
@@ -1340,7 +1367,7 @@ function saldoHTML(acc) {
       ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+')}${line('Faturas marcadas como pagas sem lançamento', n.fat, '−')}
       <li class="tot"><span class="grow">= Saldo hoje</span><span class="num">${C.brl(n.total)}</span></li>
       ${acc.inv ? '' : pend + `<li class="tot"><span class="grow">= No fim do mês, com pendentes</span><span class="num">${C.brl(b.end.total)}</span></li>`}</ul>
-    <p class="hint">${b.initialDate ? `Lançamentos até ${C.fmtD(b.initialDate)}/${b.initialDate.slice(2, 4)} já estão dentro do saldo inicial e não contam de novo. ` : ''}${acc.inv ? '' : 'Compra no cartão só sai da conta quando a fatura é paga; desconto em folha não sai da conta. Se o valor não bate com o banco, confira o saldo inicial e a data dele, e veja se há lançamento pendente que já foi pago ou movimento que falta importar.'}</p></details>`;
+    <p class="hint">${b.initialDate ? `Lançamentos até ${C.fmtD(b.initialDate)}/${b.initialDate.slice(2, 4)} já estão dentro do saldo inicial e não contam de novo. ` : ''}${acc.inv ? '' : 'Compra no cartão só sai da conta quando a fatura é paga; o que é pago pela folha não passa pela conta. Se o valor não bate com o banco, confira o saldo inicial e a data dele, e veja se há lançamento pendente que já foi pago ou movimento que falta importar.'}</p></details>`;
 }
 
 /* ----- reservas ----- */
@@ -1667,9 +1694,9 @@ async function ignoreSuggestion(x) {
 let recBusy = false;
 async function keepRecurring() {
   const st = S(); if (recBusy || !st || !st.config.setupDone || !(st.rec || []).length) return;
-  if (!M.ensureRecurring(st, M.todayISO(), true)) return;
+  if (!M.ensureRecurring(st, M.todayISO(), true) && !H.adjustForecast(st, true)) return;
   recBusy = true;
-  try { await sync.commit(s => M.ensureRecurring(s)); } finally { recBusy = false; }
+  try { await sync.commit(s => { M.ensureRecurring(s); H.adjustForecast(s); }); } finally { recBusy = false; }
 }
 
 /* ----- pessoas e Pix ----- */
