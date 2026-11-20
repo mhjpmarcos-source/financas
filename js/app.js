@@ -11,8 +11,9 @@ import * as P from './imp/parse.js';
 import * as IP from './imp/plan.js';
 import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
+import * as L from './link.js';
 
-export const VERSION = '0.9.2';
+export const VERSION = '0.10.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -196,7 +197,7 @@ function drawWizard() {
       <button class="btn block" data-wz="import" style="margin-top:10px">Importar backup (.json)</button>
       <p class="hint">O backup pode ser deste app ou do sistema antigo de planilha (arquivo <i>financas-…json</i>).</p>
       <input type="file" id="wzfile" accept=".json,application/json" hidden>`;
-  if (s === 1) body = `<h1>Contas</h1><p class="hint">Contas correntes, poupança, carteira. O saldo inicial é o saldo de hoje (pode ser zero).</p>
+  if (s === 1) body = `<h1>Contas</h1><p class="hint">Contas correntes, poupança, carteira. O saldo inicial é o que havia na conta ontem à noite (pode ser zero): o que você lançar de hoje em diante muda o saldo.</p>
       ${wz.accounts.map((a, i) => `<div class="item-row" data-i="${i}">${wz.accounts.length > 1 ? `<button class="btn ghost x" data-wz="delacc" data-i="${i}" aria-label="Remover">✕</button>` : ''}
         <label>Nome</label><input data-f="acc.name" data-i="${i}" value="${esc(a.name)}" placeholder="Ex.: Conta do banco">
         <label>Saldo inicial (R$)</label><div class="pm"><input data-f="acc.initial" data-i="${i}" inputmode="decimal" value="${esc(a.initial)}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>`).join('')}
@@ -347,25 +348,66 @@ const TYPE = { rec: 'Receita', deb: 'Despesa', cred: 'Cartão', trf: 'Transferê
 const accById = id => S().accounts.find(a => a.id === id);
 const itemById = id => S().items.find(i => i.id === id);
 const groupOf = item => item && S().groups.find(g => g.id === item.groupId);
-const monthNav = m => `<div class="month"><button data-m="-1" aria-label="Mês anterior">‹</button><b>${C.monthLabel(m)}</b><button data-m="1" aria-label="Próximo mês">›</button></div>`;
+const shortM0 = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m.slice(5) - 1] + '/' + m.slice(2, 4);
+/* mês com setas, toque no nome para escolher mês e ano, e atalho para voltar ao mês atual */
+const monthNav = m => {
+  const cur = M.todayISO().slice(0, 7), h = C.mAdd(cur, M.REC_AHEAD);
+  return `<div class="month"><button data-m="-1" aria-label="Mês anterior">‹</button><button class="mlabel" data-mpick aria-label="Escolher mês e ano"><b>${C.monthLabel(m)}</b><span class="caret" aria-hidden="true">▾</span></button><button data-m="1" aria-label="Próximo mês">›</button></div>
+    ${m !== cur ? `<div class="mtoday"><button class="link" data-mgo="${cur}">↩ Voltar para ${C.monthLabel(cur).toLowerCase()}</button></div>` : ''}
+    ${m > h ? `<p class="hint hz">As previsões de renda e de contas fixas vão até ${shortM0(h)}. Deste mês em diante aparecem só as parcelas já contratadas, por isso receitas e resultado ficam baixos.</p>` : ''}`;
+};
+function monthPicker(current) {
+  return new Promise(res => {
+    const cur = M.todayISO().slice(0, 7); let y = +current.slice(0, 4);
+    const box = document.createElement('div'); box.className = 'sheet ask';
+    const names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    const draw = () => { box.innerHTML = `<div class="panel" role="dialog" aria-modal="true"><h2>Ir para o mês</h2>
+      <div class="month"><button data-py="-1" aria-label="Ano anterior">‹</button><b>${y}</b><button data-py="1" aria-label="Próximo ano">›</button></div>
+      <div class="mgrid">${names.map((n, i) => { const m = y + '-' + String(i + 1).padStart(2, '0'); return `<button class="btn ${m === current ? 'primary' : ''} ${m === cur ? 'now' : ''}" data-pm="${m}">${n}</button>`; }).join('')}</div>
+      <div class="actions"><button class="btn" data-pm="">Cancelar</button><button class="btn" data-pm="${cur}">Mês atual</button></div></div>`; };
+    draw(); document.body.appendChild(box);
+    box.onclick = e => {
+      const yb = e.target.closest('[data-py]'); if (yb) { y += +yb.dataset.py; return draw(); }
+      const b = e.target.closest('[data-pm]'); if (!b && e.target !== box) return;
+      box.remove(); res(b && b.dataset.pm ? b.dataset.pm : null);
+    };
+  });
+}
+/* trata os toques na navegação de meses; devolve true se o toque era dela */
+function monthNavClick(e, redraw) {
+  const mb = e.target.closest('[data-m]'); if (mb) { ui.month = C.mAdd(ui.month, +mb.dataset.m); redraw(); return true; }
+  const go = e.target.closest('[data-mgo]'); if (go) { ui.month = go.dataset.mgo; redraw(); return true; }
+  if (e.target.closest('[data-mpick]')) { monthPicker(ui.month).then(m => { if (m) { ui.month = m; redraw(); } }); return true; }
+  return false;
+}
 const shortM = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m.slice(5) - 1] + '/' + m.slice(2, 4);
 
-function txRow(t, showDate) {
+function txRow(t, showDate, inFat) {
   if (t.cardPay) {
     const f = t.faturaKey && C.faturas(S()).find(x => x.key === t.faturaKey), card = f && accById(f.cardId);
-    return `<li data-tx="${t.id}"><span class="dot" style="background:#607d8b">F</span><span class="t"><b>${esc(t.desc || 'Pagamento de fatura')}</b>
-      <small>${showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) + ' · ' : ''}${f ? `fatura ${esc(card ? card.name : '')} ${shortM(f.comp)} · ${f.status === 'liq' ? 'paga' : 'faltam ' + C.brl(f.rest)}` : '<span class="tag">sem vínculo com fatura</span>'}${accById(t.accountId) ? ' · ' + esc(accById(t.accountId).name) : ''}</small></span>
+    return `<li data-tx="${t.id}" class="tx"><span class="dot" style="background:#607d8b">F</span><span class="t"><b>${esc((t.desc || 'Pagamento de fatura').replace(/^Pagamento de fatura\s+·\s+(?=.)/, ''))}</b>
+      <small>${showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) + ' · ' : ''}${f ? `fatura ${esc(card ? card.name : '')} ${shortM(f.comp)} · ${f.status === 'liq' ? 'paga' : 'faltam ' + C.brl(f.rest)}` : ''}${accById(t.accountId) ? (f ? ' · ' : '') + esc(accById(t.accountId).name) : ''}</small>
+      <span class="chips"><span class="tag info">pagamento de fatura</span>${f ? '' : '<span class="tag">sem vínculo com fatura</span>'}</span></span>
       <span class="num">−${C.brl(t.amount)}</span></li>`;
   }
   const it = itemById(t.itemId), g = groupOf(it), acc = accById(t.accountId);
-  const title = t.desc || (it ? it.name : (t.type === 'trf' ? 'Transferência' : 'Sem categoria'));
-  const sub = [showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) : '', t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
+  const parc = t.seriesId && t.seriesKind !== 'rep' ? [t.seriesIdx, t.seriesN] : t.parcKey ? [t.parcI, t.parcN] : null;
+  let title = t.desc || (it ? it.name : (t.type === 'trf' ? 'Transferência' : 'Sem categoria'));
+  if (parc || t.loanId) title = title.replace(/\s*\(\d+\/\d+\)\s*$/, '') || title; // o número da parcela vai na marca, por extenso
+  // "Pagamento de Boleto · FULANO": o nome vai no título e o tipo de operação desce para a linha de baixo
+  const sp = t.desc ? /^([^·]{3,26}?)\s+·\s+(.+)$/.exec(title) : null; let lead = '';
+  if (sp) { lead = sp[1]; title = sp[2]; }
+  const sub = [showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) : '', lead, t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
   const rk = t.recId && (S().rec || []).find(r => r.id === t.recId);
-  const tags = (t.seriesId ? `<span class="tag info">${t.seriesIdx}/${t.seriesN}</span>` : '') + (t.parcKey ? `<span class="tag info">${t.parcI}/${t.parcN}</span>` : '') + (rk ? `<span class="tag info">${rk.kind === 'var' ? 'variável' : 'fixa'}</span>` : '')
-    + (t.folha ? '<span class="tag info">pago pela folha</span>' : '') + (t.adj ? '<span class="tag info">ajuste de valor</span>' : '')
-    + (t.prev ? '<span class="tag">previsto</span>' : t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : '');
-  return `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
-    <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${tags}</small></span>
+  const chip = (txt, cls) => `<span class="tag ${cls || ''}">${txt}</span>`;
+  const chips = (parc ? chip(`parcela ${parc[0]} de ${parc[1]}`, 'info') : t.seriesId ? chip(`${t.seriesIdx} de ${t.seriesN}`, 'info') : '')
+    + (showDate && !inFat && t.type === 'cred' ? chip('fatura ' + shortM(C.txComp(S(), t)), 'info') : '')
+    + (rk ? chip(rk.kind === 'var' ? 'todo mês · valor variável' : 'todo mês', 'info') : '')
+    + (t.folha ? chip('pago pela folha', 'info') : '') + (t.adj ? chip('ajuste de valor', 'info') : '')
+    + (t.prev ? chip('previsto') : t.status === 'pend' && t.type !== 'cred' ? chip('pendente') : '')
+    + (!t.itemId && t.type !== 'trf' ? chip('sem categoria') : '');
+  return `<li data-tx="${t.id}" class="tx"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
+    <span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small>${chips ? `<span class="chips">${chips}</span>` : ''}</span>
     <span class="num ${t.type === 'rec' || t.amount < 0 ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : t.amount < 0 ? '+' : '−'}${C.brl(Math.abs(t.amount))}</span></li>`;
 }
 
@@ -401,15 +443,27 @@ function pageLanc() {
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
       <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}</p>`;
+    const rv = L.review(st);
+    if (rv.n) html += `<button class="banner" id="rv-open"><span class="grow"><b>${rv.n} lançamento${rv.n > 1 ? 's' : ''} para conferir</b><small>${[rv.pay.length + rv.relink.length ? 'pagamento de fatura lançado como despesa' : '', rv.refund.length ? 'pix devolvido' : '', rv.nocat.length ? 'sem categoria' : ''].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">›</span></button>`;
     if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
     else {
-      let day = '';
-      html += '<div class="card" style="padding-top:2px">';
-      list.forEach(t => {
-        if (t.date !== day) { if (day) html += '</ul>'; day = t.date; html += `<div class="day">${new Date(t.date + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: t.date.slice(0, 7) === m ? undefined : '2-digit' })}</div><ul class="list">`; }
-        html += txRow(t);
+      const inAcc = list.filter(t => t.type !== 'cred'), inCard = list.filter(t => t.type === 'cred');
+      if (inAcc.length) {
+        let day = '';
+        html += '<div class="card" style="padding-top:2px">';
+        inAcc.forEach(t => {
+          if (t.date !== day) { if (day) html += '</ul>'; day = t.date; html += `<div class="day">${new Date(t.date + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}</div><ul class="list">`; }
+          html += txRow(t);
+        });
+        html += '</ul></div>';
+      }
+      // compras no cartão: uma seção por fatura, com a data de cada compra na linha (parcelas antigas não se misturam aos dias do mês)
+      st.accounts.filter(a => a.nature === 'credito').forEach(card => {
+        const rows = inCard.filter(t => t.accountId === card.id); if (!rows.length) return;
+        const f = C.faturaOf(st, card.id, m), prevN = rows.filter(t => t.prev).length;
+        html += `<details class="card fat" open><summary><span class="grow"><b>Fatura ${esc(card.name)}</b><small>${rows.length} compra${rows.length > 1 ? 's' : ''}${prevN ? ` · ${prevN} prevista${prevN > 1 ? 's' : ''}` : ''} · vence ${C.fmtD(f.date)} · ${f.status === 'liq' ? 'paga' : f.status === 'parc' ? 'paga em parte' : 'em aberto'}</small></span><span class="num">−${C.brl(f.total)}</span></summary>
+          <ul class="list">${rows.map(t => txRow(t, true, true)).join('')}</ul><button class="link" data-fat="${card.id}">Abrir a fatura →</button></details>`;
       });
-      html += '</ul></div>';
     }
   }
   $('#page').innerHTML = html;
@@ -417,7 +471,9 @@ function pageLanc() {
   const qi = $('#q');
   qi.oninput = () => { ui.q = qi.value; const pos = qi.selectionStart; pageLanc(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
   $('#page').onclick = e => {
-    const mb = e.target.closest('[data-m]'); if (mb) { ui.month = C.mAdd(ui.month, +mb.dataset.m); return pageLanc(); }
+    if (monthNavClick(e, pageLanc)) return;
+    if (e.target.closest('#rv-open')) return conferirSheet();
+    const fo = e.target.closest('[data-fat]'); if (fo) return faturaSheet(fo.dataset.fat, ui.month);
     const li = e.target.closest('[data-tx]'); if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx));
   };
 }
@@ -447,7 +503,7 @@ function txSheet(tx, preset) {
   if ((tx && tx.cardPay) || (!tx && preset && preset.type === 'pgto')) return payFaturaSheet(tx, preset || {});
   const st = S();
   const hasCards = st.accounts.some(a => a.nature === 'credito' && a.active !== false);
-  let type = tx ? tx.type : (preset && preset.type) || 'deb';
+  let type = tx ? tx.type : (preset && preset.type) || 'deb', pendTouched = false;
   const draw = panel => {
     const kind = type === 'rec' ? 'receita' : 'despesa';
     const defDate = tx ? tx.date : (ui.month === M.todayISO().slice(0, 7) ? M.todayISO() : ui.month + '-01');
@@ -462,11 +518,14 @@ function txSheet(tx, preset) {
       : rule ? `<p class="hint">Faz parte de <b>${esc(rule.desc)}</b> (${rule.kind === 'var' ? 'todo mês, valor variável' : 'fixa, todo mês'}).${tx.prev ? ' Valor previsto.' : ''} Para mudar todos os meses ou encerrar: Agenda › Fixas e parcelas.</p>` : '';
     const FREQ = type === 'trf' ? [] : type === 'cred'
       ? [['uma', 'À vista'], ['parc', 'Parcelada'], ['fixa', 'Fixa todo mês (assinatura)'], ['var', 'Todo mês, valor variável']]
+      : type === 'rec' ? [['uma', 'Só esta vez'], ['parc', 'Recebida em parcelas'], ['fixa', 'Fixa todo mês, sem data para acabar'], ['var', 'Todo mês, valor variável (comissão, aluguel recebido…)'], ['rep', 'Repetir por alguns meses']]
       : [['uma', 'Só esta vez'], ['parc', 'Parcelada'], ['fixa', 'Fixa todo mês, sem data para acabar'], ['var', 'Todo mês, valor variável (luz, água…)'], ['rep', 'Repetir por alguns meses']];
+    const linkBox = !tx ? '' : L.canLink(tx) ? `<div class="linkbox"><button type="button" class="btn block" id="f-link">Vincular a…</button><small>Pagamento de fatura, conta que se repete (aluguel, condomínio, salário), parcela de dívida ou transferência.</small></div>`
+      : rule && !tx.prev && !tx.slipId ? '<button type="button" class="link" id="f-unlink">Desvincular desta conta que se repete</button>' : '';
     const freq0 = (preset && preset.freq) || 'uma';
     const repeat = tx || !FREQ.length ? '' : `<label for="f-freq">Frequência</label><select id="f-freq">${FREQ.map(([k, l]) => `<option value="${k}" ${k === freq0 ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <div id="f-nbox" hidden><label for="f-n" id="f-nlbl">Parcelas</label><select id="f-n"></select></div>`;
-    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : 'Novo lançamento'}</h2>${series}${origin}${loanInfo}
+    panel.innerHTML = `<h2>${tx ? 'Editar lançamento' : preset && preset.freq === 'parc' ? (type === 'rec' ? 'Nova receita em parcelas' : 'Nova compra ou despesa parcelada') : preset && preset.freq ? `Nova ${kind} que se repete` : 'Novo lançamento'}</h2>${series}${origin}${loanInfo}
       <div class="seg" id="seg">${['deb', 'cred', 'rec', 'trf'].filter(k => k !== 'cred' || hasCards || type === 'cred').map(k => `<button type="button" data-type="${k}" aria-pressed="${k === type}" ${tx && (tx.seriesId || tx.recId || tx.parcKey) && k !== type ? 'disabled' : ''}>${TYPE[k]}</button>`).join('')}</div>
       ${!tx && hasCards ? '<button type="button" class="link" id="f-pgto">Pagar fatura de cartão →</button>' : ''}
       <label for="f-val" id="f-vallbl">Valor (R$)</label><div class="pm"><input id="f-val" inputmode="decimal" value="${tx ? moneyText(tx.amount) : ''}" placeholder="0,00">${type === 'cred' ? '<button type="button" class="pmb" data-pm aria-label="Trocar sinal: negativo é estorno ou crédito no cartão">±</button>' : ''}</div>
@@ -476,10 +535,21 @@ function txSheet(tx, preset) {
         : `<label for="f-item">Categoria</label><select id="f-item"><option value="">Escolha…</option>${optItems(kind, tx && tx.itemId)}</select>
            <label for="f-acc">${type === 'cred' ? 'Cartão' : 'Conta'}</label><select id="f-acc">${optAccounts(type === 'cred' ? 'credito' : 'debito', accSel)}</select>`}
       ${type === 'cred' ? '' : `<label class="check"><input type="checkbox" id="f-pend" ${tx && tx.status === 'pend' && !(preset && preset.payNow) ? 'checked' : ''}> Ainda não ${type === 'rec' ? 'recebido' : 'pago'} (pendente)</label>`}
-      ${repeat}<p class="hint" id="f-prev"></p>
+      ${repeat}<p class="hint" id="f-prev"></p>${linkBox}
       <div class="actions">${tx ? '<button class="btn danger" id="f-del">Excluir</button>' : ''}<button class="btn" id="f-cancel">Cancelar</button><button class="btn primary" id="f-save">Salvar</button></div>`;
     panel.querySelector('#seg').onclick = e => { const b = e.target.closest('[data-type]'); if (b && !b.disabled) { type = b.dataset.type; draw(panel); } };
     if (panel.querySelector('#f-pgto')) panel.querySelector('#f-pgto').onclick = () => payFaturaSheet(null, {});
+    if (panel.querySelector('#f-link')) panel.querySelector('#f-link').onclick = () => linkSheet(tx);
+    if (panel.querySelector('#f-unlink')) panel.querySelector('#f-unlink').onclick = async () => {
+      if (!(await confirmBox(`Desvincular de "${rule.desc}"? O lançamento continua, como um lançamento comum.`))) return;
+      await sync.commit(s => { L.unlinkRule(s, tx.id); }); closeSheet(); render(); toast('Desvinculado.');
+    };
+    // data no futuro: começa como pendente (o dinheiro ainda não saiu nem entrou); a pessoa pode desmarcar
+    const pendEl = panel.querySelector('#f-pend'), dateEl = panel.querySelector('#f-date');
+    if (pendEl && !tx) {
+      const auto = () => { if (!pendTouched) pendEl.checked = dateEl.value > M.todayISO(); };
+      pendEl.onchange = () => { pendTouched = true; }; dateEl.addEventListener('change', auto); auto();
+    }
     const freqOf = () => { const f = panel.querySelector('#f-freq'); return f ? f.value : 'uma'; };
     let nFor = '';
     const fillN = () => {
@@ -499,7 +569,7 @@ function txSheet(tx, preset) {
       let txt = '';
       if ((fq === 'fixa' || fq === 'var') && d) {
         txt = `Todo mês no dia ${+d.slice(8, 10)}${type === 'cred' ? ', no cartão' : ''}, sem data para acabar: os próximos 12 meses aparecem ${type === 'cred' ? 'nas faturas' : 'na Agenda'}. `
-          + (fq === 'var' ? 'O valor previsto dos próximos meses é a média dos 3 últimos pagos (começa com este). ' : '') + 'Para mudar ou encerrar: Agenda › Fixas e parcelas.';
+          + (fq === 'var' ? `O valor previsto dos próximos meses é a média dos 3 últimos ${type === 'rec' ? 'recebidos' : 'pagos'} (começa com este). ` : '') + 'Para mudar ou encerrar: Agenda › Fixas e parcelas.';
       } else if (type === 'cred') {
         const card = accById(panel.querySelector('#f-acc').value);
         if (card && d) {
@@ -542,7 +612,7 @@ function txSheet(tx, preset) {
       const desc = panel.querySelector('#f-desc').value.trim();
       const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status, signed: type === 'cred' };
       const n = nOf(), freq = freqOf();
-      if ((freq === 'fixa' || freq === 'var') && amount < 0) return toast('Despesa fixa não pode ter valor negativo.', true);
+      if ((freq === 'fixa' || freq === 'var') && amount < 0) return toast('Conta que se repete não pode ter valor negativo.', true);
       let scope = 'one';
       if (tx && tx.seriesId) { scope = await askChoice('Salvar alteração', 'Este lançamento faz parte de uma série.', [{ label: 'Só este', value: 'one' }, { label: 'Este e os seguintes', value: 'next' }]); if (!scope) return; }
       const card = type === 'cred' ? accById(accountId) : null;
@@ -736,7 +806,7 @@ function reviewSheet(stRaw, fileName, preset) {
         ${!S().accounts.some(a => a.nature === (stRaw.kind === 'fatura' ? 'credito' : 'debito') && a.active !== false) ? `<p class="warn">Cadastre ${stRaw.kind === 'fatura' ? 'o cartão' : 'a conta'} em Contas antes de importar.</p>` : ''}
         ${chk.msg ? `<p class="${chk.ok === true ? 'okbox' : chk.ok === false ? 'warn' : 'hint'}">${chk.ok === true ? '✓ ' : chk.ok === false ? '⚠ ' : ''}${esc(chk.msg)}</p>` : ''}
         ${plan && plan.projN ? `<label class="check"><input type="checkbox" id="r-proj" ${plan.project ? 'checked' : ''}> Lançar as próximas parcelas das compras parceladas como <b>previstas</b> nas faturas seguintes (${plan.projN} parcela${plan.projN > 1 ? 's' : ''})</label>` : ''}
-        ${plan && isCard ? `<label class="check"><input type="checkbox" id="r-paid" ${plan.alreadyPaid ? 'checked' : ''}> Esta fatura já foi paga antes de eu usar o app (não tira dinheiro da conta)</label>` : ''}
+        ${plan && isCard ? `<label class="check"><input type="checkbox" id="r-paid" ${plan.alreadyPaid ? 'checked' : ''}> Esta fatura já foi paga (não tira dinheiro da conta; se o pagamento estiver no extrato, vincule depois)</label>` : ''}
         ${plan && !isCard && st.saldoIni != null && st.saldoIniDate && !(acc.initialDate === st.saldoIniDate && C.r2(acc.initial) === C.r2(st.saldoIni)) ? `<label class="check"><input type="checkbox" id="r-ini" ${plan.setInitial ? 'checked' : ''}> Usar o saldo anterior do extrato como saldo inicial da conta: <b>${C.brl(st.saldoIni)}</b> em ${C.fmtD(st.saldoIniDate)}/${st.saldoIniDate.slice(0, 4)}${acc.initialDate ? ` (hoje: ${C.brl(acc.initial)} em ${C.fmtD(acc.initialDate)})` : ` (hoje: ${C.brl(acc.initial)}, sem data)`}</label>` : ''}
         ${plan ? `<div class="seg small" id="r-filter">${[['new', 'Novos'], ['dup', 'Duplicatas'], ['ignored', 'Outros'], ['all', 'Todos']].map(([k, l]) => `<button data-f="${k}" aria-pressed="${filter === k}">${l} ${k === 'all' ? plan.rows.length : k === 'ignored' ? count('ignored') + count('already') : count(k)}</button>`).join('')}</div>
         <ul class="list irows">${rowsHTML || '<li class="empty">Nada aqui.</li>'}</ul>` : ''}
@@ -826,7 +896,7 @@ function slipSheet(list, title) {
         ${group('ev', 'Eventuais', 'Férias, 13º, horas extras, diferenças e estornos: não entram no piso previsto.', [...V, ...Dd].filter(r => r.kind === 'ev'))}
         ${group('tax', 'Impostos', 'INSS e imposto de renda. Para o piso, valem os de um mês sem eventuais.', Dd.filter(r => r.kind === 'tax'))}
         ${P ? `<div class="card flat"><h2>Piso previsto: <span class="num pos">${C.brl(P.piso)}</span> por mês</h2>
-          <p class="hint">Proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}${P.exact ? '' : ' (ainda sem um mês sem eventuais: os impostos podem estar altos)'}. Eventuais ficam de fora e aparecem quando o contracheque chegar.</p>
+          <p class="hint">Proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}${P.exact ? '' : P.estimated ? ' (estimados: ainda não há um mês sem eventuais, então o imposto dos eventuais foi tirado pela faixa do IR impressa no contracheque)' : ' (ainda sem um mês sem eventuais: os impostos podem estar altos)'}. Eventuais ficam de fora e aparecem quando o contracheque chegar.</p>
           <label class="check"><input type="checkbox" id="sl-fc" ${plan.forecast ? 'checked' : ''} ${noAcc ? 'disabled' : ''}> Prever esse valor como receita dos próximos meses (some ou muda quando eu importar o próximo contracheque)</label></div>` : ''}
         <div class="actions sticky"><button class="btn" id="sl-cancel">Cancelar</button><button class="btn primary" id="sl-go">Aplicar</button></div>`;
       panel.scrollTop = top;
@@ -875,7 +945,7 @@ function jobSheet(id) {
   const rest = loans.reduce((s, l) => s + (l.rest || 0), 0), month = loans.filter(l => !l.ended).reduce((s, l) => s + l.v, 0), others = H.folhaFixed(st, id);
   openSheet(`<h2>${esc(job.name)}</h2>
     ${P ? `<div class="kpis two"><div class="kpi"><small>Piso previsto por mês</small><b class="num pos">${C.brl(P.piso)}</b></div><div class="kpi"><small>Descontado em folha (despesas suas)</small><b class="num neg">${C.brl(P.folha)}</b></div></div>
-      <p class="hint">Piso = proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}. É o líquido esperado num mês sem eventuais; a cada contracheque ele é recalculado.</p>` : '<p class="hint">Ainda sem contracheque mensal.</p>'}
+      <p class="hint">Piso = proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}${P.estimated ? ' (estimados pela faixa do IR, porque ainda não há um mês sem eventuais)' : ''}. É o líquido esperado num mês sem eventuais; a cada contracheque ele é recalculado.</p>` : '<p class="hint">Ainda sem contracheque mensal.</p>'}
     <h3 class="sub">Consignados (dívidas pagas pela folha)</h3>
     ${loans.length ? `<p class="hint">${C.brl(month)} por mês${rest ? ` · faltam ${C.brl(rest)} nos que informam o total` : ''}. Também aparecem em Agenda › Dívidas e Pix. Toque para ver ou corrigir a parcela.</p>
       <ul class="list wrap">${loans.map(l => `<li data-lp="${esc(l.id)}"><span class="t"><b>${esc(l.desc)}</b><small>${loanLine(l)}</small></span><span class="num">${C.brl(l.v)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhum empréstimo nos contracheques.</p>'}
@@ -998,6 +1068,8 @@ function pageAgenda() {
     const ok = e.target.closest('[data-ok]'); if (ok) return confirmPending(ok.dataset.ok);
     const px = e.target.closest('[data-pix]'); if (px) { const t = S().tx.find(x => x.id === px.dataset.pix), who = t && payeeOf(t); return who && pixSheet(who, t.amount, t.id); }
     if (e.target.id === 'fx-new') return txSheet(null, { freq: 'fixa' });
+    if (e.target.id === 'fx-new-rec') return txSheet(null, { type: 'rec', freq: 'fixa' });
+    if (e.target.id === 'fx-new-parc') return txSheet(null, { freq: 'parc' });
     if (e.target.id === 'job-imp') return pickImportFile({});
     const jb = e.target.closest('[data-job]'); if (jb) return jobSheet(jb.dataset.job);
     const rc = e.target.closest('[data-rec]'); if (rc) return recSheet(rc.dataset.rec);
@@ -1134,31 +1206,36 @@ function payFaturaSheet(tx, preset = {}) {
   const st = S();
   const cards = st.accounts.filter(a => a.nature === 'credito' && (a.active !== false || (tx && tx.faturaKey && tx.faturaKey.startsWith(a.id + '|'))));
   if (!cards.length) return toast('Cadastre o cartão em Contas antes de registrar o pagamento da fatura.', true);
-  let cardId = preset.cardId || (tx && tx.faturaKey ? tx.faturaKey.split('|')[0] : '') || cards[0].id;
-  let key = tx ? (tx.faturaKey || '') : (preset.comp ? cardId + '|' + preset.comp : null);
+  const convert = !!(tx && !tx.cardPay); // despesa comum que na verdade é o pagamento de uma fatura
+  const learned = tx && st.rules && st.rules['pay:' + L.keyOf(tx)];
+  let cardId = preset.cardId || (tx && tx.faturaKey ? tx.faturaKey.split('|')[0] : '') || (learned && cards.some(c => c.id === learned.cardId) ? learned.cardId : '') || cards[0].id;
+  let key = tx && tx.cardPay && tx.faturaKey && tx.faturaKey.startsWith(cardId + '|') ? tx.faturaKey : (!tx && preset.comp ? cardId + '|' + preset.comp : (tx && tx.cardPay && !preset.cardId ? '' : null));
   openSheet('', panel => {
     const draw = (keepValues) => {
       const old = keepValues ? { v: panel.querySelector('#p-val').value, d: panel.querySelector('#p-date').value, acc: panel.querySelector('#p-acc').value } : null;
       const card = accById(cardId);
-      const opts = C.faturaCandidates(S(), { cardId });
+      // ao converter, procura a fatura pela data e pelo valor do lançamento (inclui as marcadas como pagas sem pagamento)
+      const opts = C.faturaCandidates(S(), tx ? { cardId, date: tx.date, amount: tx.amount } : { cardId });
+      if (tx) C.faturas(S()).filter(x => x.cardId === cardId && x.total > 0 && !x.payments.length && Math.abs(x.total - tx.amount) <= 0.05 && !opts.some(o => o.key === x.key)).forEach(x => opts.unshift(x));
       // a fatura já vinculada a este pagamento entra mesmo que esteja quitada
       if (key && !opts.some(f => f.key === key)) { const f = C.faturas(S()).find(x => x.key === key); if (f) opts.unshift(f); }
-      if (key === null) key = (opts[0] || {}).key || '';
+      if (key === null) { const best = opts[0]; key = best && (!tx || best.exact || Math.abs(best.total - tx.amount) <= 0.05 || best.dist <= 20) ? best.key : ''; }
       const sel = opts.find(f => f.key === key);
       const restFor = f => f ? C.r2(f.rest + (tx && tx.faturaKey === f.key ? tx.amount : 0)) : 0;
       const defVal = tx ? tx.amount : sel ? restFor(sel) : '';
-      panel.innerHTML = `<h2>${tx ? 'Editar pagamento de fatura' : 'Pagar fatura'}</h2>
-        <p class="hint">O dinheiro sai da conta, mas não conta como despesa nova: as compras já estão no cartão.</p>
+      panel.innerHTML = `<h2>${convert ? 'É pagamento de fatura' : tx ? 'Editar pagamento de fatura' : 'Pagar fatura'}</h2>
+        ${convert ? `<p class="hint"><b>${esc(tx.desc || '')}</b> deixa de contar como despesa: as compras já estão no cartão. O app guarda este nome e reconhece sozinho nas próximas importações.</p>` : '<p class="hint">O dinheiro sai da conta, mas não conta como despesa nova: as compras já estão no cartão.</p>'}
         <label for="p-card">Cartão</label><select id="p-card">${cards.map(c => `<option value="${c.id}" ${c.id === cardId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
         <label for="p-fat">Fatura</label><select id="p-fat">${opts.map(f => `<option value="${f.key}" ${f.key === key ? 'selected' : ''}>${esc(faturaLabel(f))}</option>`).join('')}<option value="" ${!key ? 'selected' : ''}>Sem vínculo com fatura</option></select>
         <label for="p-val">Valor pago (R$)</label><input id="p-val" inputmode="decimal" value="${old ? esc(old.v) : (defVal !== '' ? moneyText(+defVal) : '')}" placeholder="0,00">
         <label for="p-date">Data do pagamento</label><input id="p-date" type="date" value="${old ? esc(old.d) : (tx ? tx.date : M.todayISO())}">
         <label for="p-acc">Pago pela conta</label><select id="p-acc">${optAccounts('debito', old ? old.acc : (tx ? tx.accountId : (preset.accountId || (card && card.payAccount) || '')))}</select>
         <p class="hint" id="p-prev"></p>
-        <div class="actions">${tx ? '<button class="btn danger" id="p-del">Excluir</button>' : ''}<button class="btn" id="p-cancel">Cancelar</button><button class="btn primary" id="p-save">Salvar</button></div>`;
+        ${tx && tx.cardPay && tx.origin === 'import' ? '<button type="button" class="link" id="p-undo">Não é pagamento de fatura: voltar a ser despesa comum</button>' : ''}
+        <div class="actions">${tx && !convert ? '<button class="btn danger" id="p-del">Excluir</button>' : ''}<button class="btn" id="p-cancel">Cancelar</button><button class="btn primary" id="p-save">${convert ? 'Vincular' : 'Salvar'}</button></div>`;
       const prev = () => {
         const v = C.parseMoney(panel.querySelector('#p-val').value), f = opts.find(x => x.key === panel.querySelector('#p-fat').value), h = panel.querySelector('#p-prev');
-        if (!f) { h.textContent = 'Sem vínculo: o pagamento sai da conta, mas nenhuma fatura é dada como paga.'; return; }
+        if (!f) { h.textContent = 'Sem vínculo: o pagamento sai da conta, mas nenhuma fatura é dada como paga. Use quando a fatura deste mês não está no app.'; return; }
         const rest = restFor(f);
         h.textContent = !(v > 0) ? `Falta pagar ${C.brl(rest)} desta fatura.` : Math.abs(v - rest) < 0.01 ? 'Valor igual ao que falta: a fatura fica paga.'
           : v < rest ? `Pagamento parcial: depois dele ainda faltarão ${C.brl(rest - v)} desta fatura.` : `Valor maior que o que falta (${C.brl(rest)}): a fatura fica paga e sobra ${C.brl(v - rest)} de crédito.`;
@@ -1167,7 +1244,10 @@ function payFaturaSheet(tx, preset = {}) {
       panel.querySelector('#p-card').onchange = e => { cardId = e.target.value; key = null; draw(true); };
       panel.querySelector('#p-fat').onchange = e => { key = e.target.value; const f = opts.find(x => x.key === key); if (f && !tx) panel.querySelector('#p-val').value = moneyText(restFor(f)); prev(); };
       panel.querySelector('#p-cancel').onclick = closeSheet;
-      if (tx) panel.querySelector('#p-del').onclick = async () => {
+      if (panel.querySelector('#p-undo')) panel.querySelector('#p-undo').onclick = async () => {
+        await sync.commit(s => { L.undoCardPay(s, tx.id); }); closeSheet(); render(); toast('Voltou a ser despesa comum. Escolha a categoria.');
+      };
+      if (panel.querySelector('#p-del')) panel.querySelector('#p-del').onclick = async () => {
         if (!(await confirmBox('Excluir este pagamento de fatura?'))) return;
         await sync.commit(s => M.removeRecord(s, 'tx', tx.id)); closeSheet(); toast('Pagamento excluído.');
       };
@@ -1182,19 +1262,121 @@ function payFaturaSheet(tx, preset = {}) {
           let t = tx && s.tx.find(x => x.id === tx.id);
           if (!t) { t = M.newTx({ type: 'deb', amount, date, accountId, desc, status: 'liq' }); s.tx.push(t); }
           Object.assign(t, { type: 'deb', amount, date, accountId, itemId: '', status: 'liq', cardPay: true, faturaKey: fk });
-          if (!tx || /^Pagamento de fatura/.test(tx.desc || '')) t.desc = desc;
+          if (!tx || (/^Pagamento de fatura/.test(tx.desc || '') && tx.origin !== 'import')) t.desc = desc;
           M.touch(t);
+          L.learnPay(s, t, cardId); // o nome que o banco usa passa a apontar para este cartão
         });
         const after = C.faturas(S()).find(x => x.key === fk);
         closeSheet(); render();
-        toast(!f ? 'Pagamento registrado.' : after && after.status === 'liq' ? 'Pagamento registrado: fatura paga.' : `Pagamento parcial registrado: faltam ${C.brl(after ? after.rest : 0)}.`);
+        toast(!f ? (convert ? 'Vinculado: deixou de contar como despesa.' : 'Pagamento registrado.') : after && after.status === 'liq' ? 'Pagamento registrado: fatura paga.' : `Pagamento parcial registrado: faltam ${C.brl(after ? after.rest : 0)}.`);
+        if (preset.then) preset.then();
       };
     };
     draw(false);
   });
 }
 
-/* ----- resumo ----- */
+/* ----- vincular um lançamento que já existe ----- */
+function linkSheet(tx, then) {
+  const st = S(); if (!L.canLink(tx)) return;
+  const isAcc = tx.type !== 'cred', rules = L.ruleOptions(st, tx), parcels = isAcc ? L.parcelOptions(st, tx) : [];
+  const others = isAcc ? st.accounts.filter(a => a.nature === 'debito' && a.active !== false && a.id !== tx.accountId) : [];
+  const hasCards = st.accounts.some(a => a.nature === 'credito');
+  const word = tx.type === 'rec' ? 'receita' : 'despesa';
+  const opt = (id, title, sub) => `<button type="button" class="opt" id="${id}"><b>${title}</b><small>${sub}</small></button>`;
+  const pick = (id, label, options, btn) => `<div class="optbox"><label for="${id}">${label}</label><div class="pickrow"><select id="${id}">${options}</select><button type="button" class="btn primary" id="${id}-ok">${btn}</button></div></div>`;
+  const done = msg => { closeSheet(); render(); toast(msg); if (then) then(); };
+  openSheet('', panel => {
+    panel.innerHTML = `<h2>Vincular</h2>
+      <p class="hint"><b>${esc(tx.desc || (itemById(tx.itemId) || {}).name || '')}</b> · ${C.fmtD(tx.date)}/${tx.date.slice(2, 4)} · ${C.brl(Math.abs(tx.amount))}</p>
+      <p class="hint">Diga o que este lançamento é. O app para de contar em dobro e, nas próximas importações, reconhece sozinho pelo nome que o banco usa.</p>
+      ${tx.type === 'deb' && hasCards ? opt('lk-pay', 'É o pagamento de uma fatura de cartão', 'Sai da conta, mas não é despesa nova: as compras já estão no cartão.') : ''}
+      ${rules.length ? pick('lk-rule', `É o mês de uma ${word} que se repete, já cadastrada`, rules.map(r => `<option value="${r.id}">${esc(r.desc)} · ${r.kind === 'var' ? '≈ ' : ''}${C.brl(M.recEstimate(st, r))} · dia ${r.day}</option>`).join(''), 'Vincular') : ''}
+      ${opt('lk-new', `Criar uma ${word} que se repete a partir deste`, tx.type === 'rec' ? 'Salário, aluguel recebido, pensão… Este vira o primeiro mês e os próximos ficam previstos.' : 'Aluguel, condomínio, escola, assinatura… Este vira o primeiro mês e os próximos ficam previstos.')}
+      ${parcels.length ? pick('lk-parc', tx.type === 'rec' ? 'É a parcela de algo que me devem' : 'É a parcela de uma dívida minha', parcels.map(o => `<option value="${o.tx.id}">${esc(o.tx.desc || o.loan.person)} · ${C.fmtD(o.tx.date)}/${o.tx.date.slice(2, 4)} · ${C.brl(o.tx.amount)}</option>`).join(''), 'Quitar') : ''}
+      ${others.length ? pick('lk-trf', tx.type === 'rec' ? 'É dinheiro meu que veio de outra conta' : 'É transferência para outra conta ou investimento', others.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join(''), 'Transferência') : ''}
+      <div class="actions"><button class="btn" id="lk-c">Voltar</button></div>`;
+    const q = id => panel.querySelector('#' + id);
+    q('lk-c').onclick = () => txSheet(S().tx.find(t => t.id === tx.id) || tx);
+    if (q('lk-pay')) q('lk-pay').onclick = () => payFaturaSheet(tx, { then });
+    if (q('lk-rule-ok')) q('lk-rule-ok').onclick = async () => {
+      const r = rules.find(x => x.id === q('lk-rule').value); if (!r) return;
+      let fix = false;
+      if (r.kind === 'fixa' && Math.abs(r.amount - Math.abs(tx.amount)) > 0.005) {
+        const ch = await askChoice('Valor diferente do previsto', `${r.desc} está prevista em ${C.brl(r.amount)} e este mês foi ${C.brl(Math.abs(tx.amount))}.`, [{ label: 'Só este mês foi diferente', value: 'one' }, { label: `Novo valor previsto: ${C.brl(Math.abs(tx.amount))} daqui em diante`, value: 'fix' }]);
+        if (!ch) return; fix = ch === 'fix';
+      }
+      let res = { ok: false, error: 'Não foi possível vincular.' };
+      await sync.commit(s => { res = L.linkToRule(s, tx.id, r.id, { fixFuture: fix }); if (res.ok) M.ensureRecurring(s); });
+      if (!res.ok) return toast(res.error, true);
+      done(`Vinculado a ${r.desc} (${shortM(res.month)}).${fix ? ' Próximos meses com o novo valor.' : ''}`);
+    };
+    q('lk-new').onclick = async () => {
+      if (!tx.itemId) return toast('Escolha antes a categoria deste lançamento (volte e salve).', true);
+      const kind = await askChoice(`Nova ${word} que se repete`, 'Como é o valor de um mês para o outro?', [{ label: 'Fixa: o mesmo valor todo mês', value: 'fixa' }, { label: 'Variável: muda todo mês (previsto pela média)', value: 'var' }]);
+      if (!kind) return;
+      let r = null; await sync.commit(s => { r = L.ruleFromTx(s, tx.id, kind); });
+      if (!r) return toast('Não foi possível criar.', true);
+      done(`${r.desc} cadastrada. Os próximos 12 meses estão em Agenda › Fixas e parcelas.`);
+    };
+    if (q('lk-parc-ok')) q('lk-parc-ok').onclick = async () => {
+      let ok = false; await sync.commit(s => { ok = L.linkToParcel(s, tx.id, q('lk-parc').value); });
+      ok ? done('Parcela quitada com este lançamento.') : toast('Não foi possível vincular.', true);
+    };
+    if (q('lk-trf-ok')) q('lk-trf-ok').onclick = async () => {
+      let ok = false; await sync.commit(s => { ok = L.toTransfer(s, tx.id, q('lk-trf').value); });
+      ok ? done('Virou transferência: não conta como receita nem despesa.') : toast('Não foi possível converter.', true);
+    };
+  });
+}
+
+/* lançamentos que provavelmente contam errado: o app aponta, a pessoa decide */
+function conferirSheet() {
+  openSheet('', panel => {
+    const name = id => esc((accById(id) || {}).name || '');
+    const head = t => `<span class="t"><b>${esc(t.desc || 'Sem descrição')}</b><small>${C.fmtD(t.date)}/${t.date.slice(2, 4)} · ${C.brl(Math.abs(t.amount))} · ${name(t.accountId)}</small></span>`;
+    const draw = () => {
+      const st = S(), R = L.review(st);
+      if (!R.n) { closeSheet(); render(); return toast('Tudo conferido.'); }
+      const sec = (title, hint, rows) => rows.length ? `<h3 class="sub">${title}</h3><p class="hint">${hint}</p><ul class="list rv">${rows.join('')}</ul>` : '';
+      panel.innerHTML = `<h2>Para conferir</h2><p class="hint">O app não muda nada sozinho: ele aponta o que parece contar errado e você decide.</p>`
+        + sec('Pagamento de fatura lançado como despesa', 'Do jeito que está, o gasto conta duas vezes: nas compras do cartão e de novo aqui.',
+          R.pay.map((x, i) => `<li>${head(x.tx)}<small class="why">${x.fatura ? `Mesmo valor da fatura ${name(x.cardId)} de ${shortM(x.fatura.comp)}.` : `Mesmo nome de outro pagamento do cartão ${name(x.cardId)}.`}</small>
+            <span class="row"><button class="btn small" data-rvno="${x.tx.id}">Não é</button><button class="btn small primary" data-rvpay="${i}">É o pagamento</button></span></li>`)
+          .concat(R.relink.map((x, i) => `<li>${head(x.tx)}<small class="why">Está ligado à fatura do ${name(x.from)}, mas a descrição fala em ${name(x.to)}.</small>
+            <span class="row"><button class="btn small" data-rvno="${x.tx.id}">Está certo</button><button class="btn small primary" data-rvfix="${i}">Corrigir cartão</button></span></li>`)))
+        + sec('Pix devolvido ou rejeitado', 'Saiu e voltou no mesmo valor. Excluir os dois deixa as receitas e despesas do mês certas; o saldo não muda.',
+          R.refund.map((x, i) => `<li>${head(x.out)}<small class="why">Voltou em ${C.fmtD(x.in.date)}: ${esc(x.in.desc || '')}.</small>
+            <span class="row"><button class="btn small" data-rvno="${x.in.id}">Manter</button><button class="btn small primary" data-rvdel="${i}">Excluir os dois</button></span></li>`))
+        + sec('Sem categoria', 'Ficam fora dos totais por categoria e do orçamento. Toque para escolher.',
+          R.nocat.map(t => `<li data-tx="${t.id}" class="go">${head(t)}<span aria-hidden="true">›</span></li>`))
+        + '<div class="actions"><button class="btn" id="rv-c">Fechar</button></div>';
+      panel._R = R;
+    };
+    panel.onclick = async e => {
+      const R = panel._R; if (!R) return;
+      if (e.target.id === 'rv-c') { closeSheet(); return render(); }
+      const b = e.target.closest('button[data-rvno],button[data-rvpay],button[data-rvfix],button[data-rvdel]'), li = e.target.closest('li[data-tx]');
+      if (!b) { if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx)); return; }
+      if (b.dataset.rvno) { await sync.commit(s => L.ignoreReview(s, [b.dataset.rvno])); return draw(); }
+      if (b.dataset.rvpay) {
+        const x = R.pay[+b.dataset.rvpay];
+        if (!x.fatura) return payFaturaSheet(x.tx, { cardId: x.cardId, then: conferirSheet });
+        await sync.commit(s => { L.toCardPay(s, x.tx.id, x.fatura.key, x.cardId); });
+        toast(`Vinculado à fatura ${(accById(x.cardId) || {}).name} de ${shortM(x.fatura.comp)}.`); return draw();
+      }
+      if (b.dataset.rvfix) { const x = R.relink[+b.dataset.rvfix]; return payFaturaSheet(x.tx, { cardId: x.to, then: conferirSheet }); }
+      if (b.dataset.rvdel) {
+        const x = R.refund[+b.dataset.rvdel];
+        if (!(await confirmBox(`Excluir os dois lançamentos de ${C.brl(x.out.amount)} (a saída e a devolução)?`))) return;
+        await sync.commit(s => { M.removeRecord(s, 'tx', x.out.id); M.removeRecord(s, 'tx', x.in.id); });
+        toast('Os dois foram excluídos.'); return draw();
+      }
+    };
+    draw();
+  });
+}
+
 /* ----- resumo: mês, orçamento e ano ----- */
 function downloadFile(name, text, type) {
   const blob = new Blob([text], { type });
@@ -1241,7 +1423,7 @@ function pageResumo() {
 function bindResumo(redraw) {
   $('#page').onclick = e => {
     const v = e.target.closest('[data-rv]'); if (v) { ui.rsView = v.dataset.rv; return pageResumo(); }
-    const mb = e.target.closest('[data-m]'); if (mb) { ui.month = C.mAdd(ui.month, +mb.dataset.m); return redraw(); }
+    if (monthNavClick(e, redraw)) return;
     const y = e.target.closest('[data-y]'); if (y) { ui.year = (ui.year || +M.todayISO().slice(0, 4)) + +y.dataset.y; return redraw(); }
     const bi = e.target.closest('[data-bi]'); if (bi) return budgetSheet(bi.dataset.bi);
     if (e.target.id === 'b-add') return budgetSheet(null);
@@ -1371,7 +1553,7 @@ function saldoHTML(acc) {
     <ul class="sublist calc"><li><span class="grow">Saldo inicial${b.initialDate ? ' (fim do dia ' + C.fmtD(b.initialDate) + '/' + b.initialDate.slice(2, 4) + ')' : ''}</span><span class="num">${C.brl(b.initial)}</span></li>
       ${line(acc.inv ? 'Entradas' : 'Receitas já recebidas', n.rec, '+')}${line(acc.inv ? 'Saídas' : 'Despesas já pagas', n.deb, '−')}${line('Pagamentos de fatura de cartão', n.cardPay, '−')}
       ${line(acc.inv ? 'Aportes (transferências recebidas)' : 'Transferências recebidas', n.trfIn, '+')}${line(acc.inv ? 'Resgates (transferências enviadas)' : 'Transferências enviadas', n.trfOut, '−')}
-      ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+')}${line('Faturas marcadas como pagas sem lançamento', n.fat, '−')}
+      ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+')}
       <li class="tot"><span class="grow">= Saldo hoje</span><span class="num">${C.brl(n.total)}</span></li>
       ${acc.inv ? '' : pend + `<li class="tot"><span class="grow">= No fim do mês, com pendentes</span><span class="num">${C.brl(b.end.total)}</span></li>`}</ul>
     <p class="hint">${b.initialDate ? `Lançamentos até ${C.fmtD(b.initialDate)}/${b.initialDate.slice(2, 4)} já estão dentro do saldo inicial e não contam de novo. ` : ''}${acc.inv ? '' : 'Compra no cartão só sai da conta quando a fatura é paga; o que é pago pela folha não passa pela conta. Se o valor não bate com o banco, confira o saldo inicial e a data dele, e veja se há lançamento pendente que já foi pago ou movimento que falta importar.'}</p></details>`;
@@ -1616,18 +1798,20 @@ function fixasHTML(st) {
   const sum = l => l.reduce((s, x) => s + x.est, 0);
   const row = ({ r, s, est, ended }) => { const acc = accById(r.accountId), it = itemById(r.itemId), g = groupOf(it);
     return `<li data-rec="${r.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${r.type === 'rec' ? 'R' : r.type === 'cred' ? 'C' : 'D'}</span>
-      <span class="t"><b>${esc(r.desc || (it ? it.name : ''))}</b><small>dia ${r.day}${acc ? ' · ' + esc(acc.name) : ''}${r.person ? ' · Pix' : ''}${ended ? ` · encerrada em ${shortM(r.end)}` : r.end ? ` · até ${shortM(r.end)}` : ''}${r.kind === 'var' && s.n > 1 ? ` · média ${C.brl(s.avg3)} (de ${C.brl(s.min)} a ${C.brl(s.max)})` : r.kind === 'var' && s.n ? ' · 1 mês pago' : r.kind === 'var' ? ' · estimativa' : ''}</small></span>
+      <span class="t"><b>${esc(r.desc || (it ? it.name : ''))}</b><small>dia ${r.day}${acc ? ' · ' + esc(acc.name) : ''}${r.person ? ' · Pix' : ''}${ended ? ` · encerrada em ${shortM(r.end)}` : r.end ? ` · até ${shortM(r.end)}` : ''}${r.kind === 'var' && s.n > 1 ? ` · média ${C.brl(s.avg3)} (de ${C.brl(s.min)} a ${C.brl(s.max)})` : r.kind === 'var' && s.n ? (r.type === 'rec' ? ' · 1 mês recebido' : ' · 1 mês pago') : r.kind === 'var' ? ' · estimativa' : ''}</small></span>
       <span class="num ${r.type === 'rec' ? 'pos' : ''}">${r.kind === 'var' ? '≈ ' : ''}${C.brl(est)}</span></li>`; };
   const block = (title, list, hint) => list.length ? `<div class="card"><h2>${title} <span class="hint">(${list.length})</span></h2>${hint ? `<p class="hint">${hint}</p>` : ''}<ul class="list wrap">${list.map(row).join('')}</ul></div>` : '';
   const sug = C.detectRecurring(st, today);
   const P = C.parcelSummary(st, today);
-  let html = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
+  let html = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas e variáveis / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
   html += jobsHTML(st);
   html += block('Despesas fixas', out.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, sem data para acabar, até você encerrar.')
     + block('Despesas variáveis', out.filter(x => x.r.kind === 'var'), 'Sempre existem, mas o valor muda. O previsto é a média dos 3 últimos meses pagos.')
-    + block('Receitas que se repetem', inc);
+    + block('Receitas fixas', inc.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, até você encerrar. A renda do emprego é corrigida pelo contracheque.')
+    + block('Receitas variáveis', inc.filter(x => x.r.kind === 'var'), 'O previsto é a média dos 3 últimos meses recebidos.');
   if (!act.length) html += `<div class="card empty">Nenhuma conta fixa cadastrada.<br>Cadastre aqui ou, ao lançar, escolha a frequência "Fixa todo mês" ou "Todo mês, valor variável".</div>`;
-  html += `<button class="btn block" id="fx-new">+ Nova despesa fixa ou variável</button>`;
+  html += `<div class="newrow"><button class="btn" id="fx-new">+ Despesa que se repete</button><button class="btn" id="fx-new-rec">+ Receita que se repete</button><button class="btn" id="fx-new-parc">+ Parcelado</button></div>
+    <p class="hint">Fixa ou de valor variável (luz, comissão). Em "Parcelado" você escolhe se é despesa, compra no cartão ou receita em parcelas. Uma conta que já está nos lançamentos pode ser vinculada: abra o lançamento e toque em "Vincular a…".</p>`;
   if (sug.length) html += `<div class="card"><h2>Encontradas no seu histórico</h2><p class="hint">Aparecem quase todo mês nos últimos 6 meses. Cadastre para o app prever os próximos meses.</p>
     <ul class="list wrap">${sug.map((x, i) => `<li><span class="t"><b>${esc(x.desc || (itemById(x.itemId) || {}).name || '')}</b><small>${x.kind === 'fixa' ? 'fixa' : `variável, de ${C.brl(x.min)} a ${C.brl(x.max)}`} · ${x.n} dos últimos 6 meses · dia ~${x.day}${accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ''}</small></span>
       <span class="num">${x.kind === 'var' ? '≈ ' : ''}${C.brl(x.amount)}</span><span class="row"><button class="btn small" data-ign="${i}">Ignorar</button><button class="btn small primary" data-sug="${i}">Cadastrar</button></span></li>`).join('')}</ul></div>`;
@@ -1641,12 +1825,12 @@ function fixasHTML(st) {
 function recSheet(id) {
   const st = S(), r = st.rec.find(x => x.id === id); if (!r) return;
   const s = C.recStats(st, r), est = M.recEstimate(st, r), cm = M.todayISO().slice(0, 7), ended = !!(r.end && r.end < cm);
-  const nature = r.type === 'cred' ? 'credito' : 'debito';
+  const nature = r.type === 'cred' ? 'credito' : 'debito', paidW = r.type === 'rec' ? 'recebidos' : 'pagos';
   openSheet('', panel => {
     panel.innerHTML = `<h2>${esc(r.desc)}</h2>
-      <p class="hint">${r.kind === 'var' ? (s.n ? `Últimos ${s.n} meses pagos: média dos 3 últimos ${C.brl(s.avg3)}, menor ${C.brl(s.min)}, maior ${C.brl(s.max)}, último ${C.brl(s.last)}.` : 'Ainda sem meses pagos: usa a estimativa abaixo.') + ` Previsto para os próximos meses: <b>${C.brl(est)}</b>.` : `Fixa: ${C.brl(r.amount)} todo mês.`}
+      <p class="hint">${r.kind === 'var' ? (s.n ? `Últimos ${s.n} meses ${paidW}: média dos 3 últimos ${C.brl(s.avg3)}, menor ${C.brl(s.min)}, maior ${C.brl(s.max)}, último ${C.brl(s.last)}.` : `Ainda sem meses ${paidW}: usa a estimativa abaixo.`) + ` Previsto para os próximos meses: <b>${C.brl(est)}</b>.` : `Fixa: ${C.brl(r.amount)} todo mês.`}
         Desde ${shortM(r.start)}${r.end ? `, ${ended ? 'encerrada em' : 'até'} ${shortM(r.end)}` : ', sem data para acabar'}.</p>
-      ${(r.keys || []).length ? `<p class="hint">No extrato, é reconhecida por: <b>${r.keys.map(esc).join('</b>, <b>')}</b>. <button type="button" class="link" id="rc-forget">Esquecer</button></p>` : '<p class="hint">Ao importar o extrato, escolha esta conta na linha do pagamento: o app guarda o nome que o banco usa e passa a reconhecer sozinho, mesmo quando o valor muda.</p>'}
+      ${(r.keys || []).length ? `<p class="hint">No extrato, é reconhecida por: <b>${r.keys.map(esc).join('</b>, <b>')}</b>. <button type="button" class="link" id="rc-forget">Esquecer</button></p>` : `<p class="hint">Para o app reconhecer sozinho no extrato: ao importar, escolha esta conta na linha do ${r.type === 'rec' ? 'crédito' : 'pagamento'}; ou abra um lançamento já importado e toque em "Vincular a…". O app guarda o nome que o banco usa, mesmo quando o valor muda.</p>`}
       <label for="rc-desc">Descrição</label><input id="rc-desc" value="${esc(r.desc)}">
       <div class="seg small" id="rc-kind"><button type="button" data-k="fixa" aria-pressed="${r.kind === 'fixa'}">Fixa</button><button type="button" data-k="var" aria-pressed="${r.kind === 'var'}">Valor variável</button></div>
       <div class="grid2"><div><label for="rc-val" id="rc-vallbl">${r.kind === 'var' ? 'Estimativa (R$)' : 'Valor (R$)'}</label><input id="rc-val" inputmode="decimal" value="${moneyText(r.amount)}"></div>
@@ -1654,7 +1838,7 @@ function recSheet(id) {
       <label for="rc-item">Categoria</label><select id="rc-item">${optItems(r.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>
       <label for="rc-acc">${nature === 'credito' ? 'Cartão' : 'Conta'}</label><select id="rc-acc">${optAccounts(nature, r.accountId)}</select>
       ${r.type !== 'cred' ? `<label for="rc-person">${r.type === 'rec' ? 'Quem paga' : 'Para quem (para pagar com Pix)'}</label><select id="rc-person"><option value="">—</option>${(st.people || []).map(p => `<option value="${p.id}" ${p.id === r.person ? 'selected' : ''}>${esc(p.name)}${p.pixKey ? '' : ' (sem chave Pix)'}</option>`).join('')}</select>` : ''}
-      <p class="hint">Salvar muda este mês e os próximos que ainda não foram pagos.</p>
+      <p class="hint">Salvar muda este mês e os próximos que ainda não foram ${paidW}.</p>
       <div class="actions wrap"><button class="btn danger" id="rc-del">Excluir</button>${ended || r.end ? '<button class="btn" id="rc-open">Reativar</button>' : '<button class="btn" id="rc-end">Encerrar</button>'}<button class="btn" id="rc-c">Cancelar</button><button class="btn primary" id="rc-ok">Salvar</button></div>`;
     let kind = r.kind;
     if (panel.querySelector('#rc-forget')) panel.querySelector('#rc-forget').onclick = async () => { await sync.commit(st2 => { const x = st2.rec.find(y => y.id === id); if (x) { delete x.keys; delete x.words; M.touch(x); } }); toast('Nome do banco esquecido: o app volta a reconhecer só pelo valor e pela descrição.'); recSheet(id); };
@@ -1670,7 +1854,7 @@ function recSheet(id) {
       closeSheet(); render(); toast(n ? `Salvo. ${n} mês(es) em aberto atualizados.` : 'Salvo.');
     };
     if (panel.querySelector('#rc-end')) panel.querySelector('#rc-end').onclick = async () => {
-      const ch = await askChoice('Encerrar', `Qual foi o último mês de ${r.desc}? Os meses seguintes ainda em aberto são apagados; os já pagos ficam.`, [{ label: `Este mês (${shortM(cm)})`, value: cm }, { label: `O mês passado (${shortM(C.mAdd(cm, -1))})`, value: C.mAdd(cm, -1) }, { label: `O mês que vem (${shortM(C.mAdd(cm, 1))})`, value: C.mAdd(cm, 1) }]);
+      const ch = await askChoice('Encerrar', `Qual foi o último mês de ${r.desc}? Os meses seguintes ainda em aberto são apagados; os já ${paidW} ficam.`, [{ label: `Este mês (${shortM(cm)})`, value: cm }, { label: `O mês passado (${shortM(C.mAdd(cm, -1))})`, value: C.mAdd(cm, -1) }, { label: `O mês que vem (${shortM(C.mAdd(cm, 1))})`, value: C.mAdd(cm, 1) }]);
       if (!ch) return;
       let n = 0; await sync.commit(s => { const x = s.rec.find(y => y.id === id); if (x) n = M.endRec(s, x, ch); });
       closeSheet(); render(); toast(`Encerrada em ${shortM(ch)}.${n ? ` ${n} mês(es) futuros apagados.` : ''}`);
@@ -1680,7 +1864,7 @@ function recSheet(id) {
       closeSheet(); render(); toast('Reativada: os próximos meses voltaram para a Agenda.');
     };
     panel.querySelector('#rc-del').onclick = async () => {
-      if (!(await confirmBox(`Excluir "${r.desc}"? Os meses em aberto são apagados; os já pagos continuam como lançamentos comuns.`))) return;
+      if (!(await confirmBox(`Excluir "${r.desc}"? Os meses em aberto são apagados; os já ${paidW} continuam como lançamentos comuns.`))) return;
       await sync.commit(s => { const x = s.rec.find(y => y.id === id); if (x) M.removeRec(s, x); });
       closeSheet(); render(); toast('Excluída.');
     };
@@ -1702,10 +1886,10 @@ async function ignoreSuggestion(x) {
 /* cria os meses que faltam das contas que se repetem (ao abrir e quando chegam dados de outro aparelho) */
 let recBusy = false;
 async function keepRecurring() {
-  const st = S(); if (recBusy || !st || !st.config.setupDone || !(st.rec || []).length) return;
-  if (!M.ensureRecurring(st, M.todayISO(), true) && !H.adjustForecast(st, true)) return;
+  const st = S(); if (recBusy || !st || !st.config.setupDone || !((st.rec || []).length || (st.jobs || []).length)) return;
+  if (!H.maintain(st, M.todayISO(), true)) return;
   recBusy = true;
-  try { await sync.commit(s => { M.ensureRecurring(s); H.adjustForecast(s); }); } finally { recBusy = false; }
+  try { await sync.commit(s => { H.maintain(s); }); } finally { recBusy = false; }
 }
 
 /* ----- pessoas e Pix ----- */
@@ -1832,17 +2016,17 @@ function faturaSheet(cardId, comp) {
   comp = comp || C.cardCycle(card, M.todayISO()).comp;
   openSheet('', panel => {
     const f = C.faturaOf(S(), cardId, comp), paid = f.status === 'liq';
-    const stTxt = paid ? (f.manual && f.paid < f.total - 0.005 ? '✓ Marcada como paga' : '✓ Paga') : f.status === 'parc' ? `Paga em parte: ${C.brl(f.paid)} de ${C.brl(f.total)} · faltam ${C.brl(f.rest)}` : 'Ainda não paga';
+    const stTxt = paid ? (f.manual && f.paid < f.total - 0.005 ? '✓ Marcada como paga, sem pagamento registrado (não tira dinheiro da conta)' : '✓ Paga') : f.status === 'parc' ? `Paga em parte: ${C.brl(f.paid)} de ${C.brl(f.total)} · faltam ${C.brl(f.rest)}` : 'Ainda não paga';
     panel.innerHTML = `<h2>${esc(card.name)}</h2>
       <div class="month"><button data-c="-1" aria-label="Fatura anterior">‹</button><b>Fatura de ${C.monthLabel(comp).toLowerCase()}</b><button data-c="1" aria-label="Próxima fatura">›</button></div>
       <div class="kpis two"><div class="kpi"><small>Total</small><b class="num">${C.brl(f.total)}</b></div><div class="kpi"><small>Vencimento</small><b>${C.fmtD(f.date)}/${f.date.slice(0, 4)}</b></div></div>
       <p class="hint">${stTxt} · paga pela conta ${esc((accById(f.accountId) || {}).name || '—')}.</p>
       ${f.payments.length ? `<h3 class="sub">Pagamentos</h3><ul class="list">${f.payments.map(t => txRow(t, true)).join('')}</ul>` : ''}
-      ${f.list.length ? `<h3 class="sub">Compras</h3><ul class="list">${f.list.map(t => txRow(t, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
+      ${f.list.length ? `<h3 class="sub">Compras</h3><ul class="list">${f.list.map(t => txRow(t, true, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
       <div class="actions wrap"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-imp">Importar</button>
         ${f.total > 0 && !paid ? '<button class="btn primary" id="fa-reg">Registrar pagamento</button>' : ''}
         ${f.list.length ? `<button class="btn" id="fa-pay">${f.manual ? 'Desmarcar paga' : paid ? '' : 'Marcar paga sem registrar'}</button>`.replace('<button class="btn" id="fa-pay"></button>', '') : ''}</div>
-      ${!paid && f.total > 0 ? '<p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" só serve para faturas pagas antes de você começar a usar o app.</p>' : ''}`;
+      ${!paid && f.total > 0 ? '<p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" não mexe no saldo: serve para faturas pagas antes de você começar a usar o app. Se o pagamento já está nos lançamentos como despesa (um Pix para o banco do cartão), abra-o e toque em "Vincular a…".</p>' : ''}`;
     panel.onclick = async e => {
       const b = e.target.closest('[data-c]'); if (b) { comp = C.mAdd(comp, +b.dataset.c); return faturaSheet(cardId, comp); }
       const li = e.target.closest('[data-tx]'); if (li) return txSheet(S().tx.find(t => t.id === li.dataset.tx));

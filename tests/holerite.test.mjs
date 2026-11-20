@@ -49,10 +49,20 @@ assert.deepEqual([res.slips, res.created, res.folha], [1, 1, 3]);
 const sal = S.tx.find(t => t.slipId && t.type === 'rec');
 assert.deepEqual([sal.amount, sal.date, sal.status, sal.itemId, sal.accountId], [4850, '2026-02-05', 'liq', item('Salário'), conta.id]);
 const folha = S.tx.filter(t => t.folha && !t.prev); assert.equal(folha.length, 3); assert(folha.every(t => t.type === 'deb' && t.date === '2026-02-05' && t.folhaItem === item('Salário') && t.accountId === ''), 'pago pela folha: sem conta');
-// o consignado é uma dívida paga pela folha, com as parcelas seguintes agendadas até o fim; os outros descontos, 12 meses
+// o consignado é uma dívida paga pela folha; tudo o que a folha paga fica agendado até o mesmo horizonte da renda prevista (12 meses)
 assert.equal(S.loans.length, 1); const cons = S.loans[0]; assert.deepEqual([cons.dir, cons.folha, cons.person, cons.parcel, cons.i0, cons.n, cons.asOf, cons.accountId], ['out', true, 'Empréstimo Banco Exemplo 1', 400, 5, 24, '2026-01', '']);
-const sched = S.tx.filter(t => t.folha && t.prev); assert.equal(sched.length, 19 + 12 + 12); assert(sched.every(t => t.status === 'pend' && t.accountId === ''));
-const nextP = sched.filter(t => t.loanId === cons.id).sort((a, b) => a.date < b.date ? -1 : 1); assert.deepEqual([nextP[0].desc, nextP[0].date, nextP[18].desc, nextP[18].folhaM], ['Empréstimo Banco Exemplo 1 (6/24)', '2026-03-05', 'Empréstimo Banco Exemplo 1 (24/24)', '2027-08']);
+const sched = S.tx.filter(t => t.folha && t.prev); assert.equal(sched.length, 12 + 12 + 12); assert(sched.every(t => t.status === 'pend' && t.accountId === ''));
+const nextP = sched.filter(t => t.loanId === cons.id).sort((a, b) => a.date < b.date ? -1 : 1); assert.deepEqual([nextP[0].desc, nextP[0].date, nextP[11].desc, nextP[11].folhaM], ['Empréstimo Banco Exemplo 1 (6/24)', '2026-03-05', 'Empréstimo Banco Exemplo 1 (17/24)', '2027-01']);
+assert.deepEqual([H.loansOf(S)[0].end, H.loansOf(S)[0].n], ['2027-08', 24], 'o fim do consignado vem da parcela, não da agenda');
+{ // com o passar dos meses a agenda da folha acompanha o horizonte, até a última parcela
+  const Z = JSON.parse(JSON.stringify(S));
+  assert.equal(H.maintain(Z, '2026-02-10', true), 0, 'nada a fazer no mesmo mês');
+  assert(H.maintain(Z, '2026-12-10') > 0);
+  const zs = Z.tx.filter(t => t.folha && t.prev && t.loanId).map(t => t.folhaM).sort();
+  assert.equal(zs[zs.length - 1], '2027-08', 'para na última parcela'); assert.equal(H.maintain(Z, '2026-12-10', true), 0);
+  const lastM = m => C.monthSummary(Z, m);
+  assert.equal(lastM('2027-12').rec, 5500, 'último mês do horizonte: renda e descontos previstos juntos'); assert.equal(lastM('2028-01').rec, 0, 'além do horizonte não sobra só o desconto');
+}
 assert.deepEqual(C.monthSummary(S, '2026-03'), { rec: 5500, desp: 650, saldo: 4850, folha: 650 }, 'mês futuro: líquido previsto + o que a folha paga');
 assert.equal(folha.find(t => /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (5/24)');
 // o saldo só recebe o líquido; o resumo mostra os descontos em folha como despesa e soma o mesmo valor à receita
@@ -110,9 +120,9 @@ assert.equal(S.slips.length, 5); assert.equal(H.slipsOf(S, job.id).length, 5);
 // ---------- consignado: parcela lida e correção manual ----------
 let loans = H.loansOf(S, job.id);
 assert.deepEqual([loans[0].i, loans[0].n, loans[0].left, loans[0].end, loans[0].rest, loans[0].manual], [8, 24, 16, '2027-08', 6400, false]);
-assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 16);
+assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 12, 'agenda até o horizonte da renda prevista');
 const n = H.setLoanParc(S, loans[0].id, 10, 30, '2026-04', '2026-05-10'); assert(n >= 4, 'descrições corrigidas');
-assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 20, 'agenda refeita até a parcela 30');
+assert.equal(S.tx.filter(t => t.loanId === loans[0].id && t.prev).length, 12, 'agenda refeita com os números novos');
 loans = H.loansOf(S, job.id); assert.deepEqual([loans[0].i, loans[0].n, loans[0].left, loans[0].end, loans[0].manual], [10, 30, 20, '2027-12', true]);
 assert.deepEqual(S.tx.filter(t => t.folha && !t.prev && /Empr/.test(t.desc)).map(t => t.desc.match(/\((.*)\)/)[1]).sort(), ['10/30', '7/30', '8/30', '9/30']);
 // a correção continua valendo no próximo contracheque (anda um número por mês)
@@ -179,9 +189,9 @@ H.closeLoan(S6, l6.id, '2026-02-10'); assert.equal(S6.tx.filter(t => t.loanId ==
 assert.equal(S6.tx.filter(t => t.folha && t.prev).length, 24, 'os outros descontos continuam previstos');
 H.applySlipPlan(S6, H.buildSlipPlan(S6, [h2]), '2026-03-10'); assert.equal(H.loanInfo(S6, l6).ended, false, 'a rubrica voltou num contracheque mais novo: a dívida reabre'); assert.equal(l6.closed, undefined);
 const before = S.tx.length; const sl = H.slipsOf(S, job.id)[0];
-assert.equal(H.removeSlip(S, sl.id), 4); assert.equal(S.tx.length, before - 4); assert.equal(S.slips.length, 5);
+assert.equal(H.removeSlip(S, sl.id, '2026-06-10'), 4); assert.equal(S.tx.length, before - 4); assert.equal(S.slips.length, 5);
 const A = M.clone(S), B = M.clone(S);
-H.applySlipPlan(B, H.buildSlipPlan(B, [h1]));
+H.applySlipPlan(B, H.buildSlipPlan(B, [h1]), '2026-06-10');
 const mg = M.merge(A, B); assert.equal(mg.slips.length, 6); assert.equal(mg.jobs.length, 1); assert.equal(mg.tx.filter(t => t.slipId === sl.id).length, 4, 'reimportado em outro aparelho depois da exclusão');
 H.removeJob(S, job.id); assert.equal(S.jobs.length, 0); assert.equal(S.slips.length, 0); assert.equal(S.tx.filter(t => t.slipId || t.recId || t.folha).length, 0); assert.equal(S.loans.length, 0);
 
@@ -227,3 +237,21 @@ const bi = C.balanceBreakdown(I, inv.id, '2026-02-28'); assert.deepEqual([bi.now
 // versão antiga do app não apaga coleções de uma versão mais nova ao juntar
 const old = M.clone(I), neu = M.clone(I); neu.futuro = [{ id: 'x1', upd: 1 }]; assert.deepEqual(M.merge(old, neu).futuro, [{ id: 'x1', upd: 1 }]);
 console.log('contracheque, investimentos e saldo tests OK');
+
+// ---------- só um contracheque, e de um mês com eventuais: o piso desconta o imposto dos eventuais pela faixa ----------
+{
+  const P = M.emptyState(); P.config.setupDone = true; P.groups = pl.groups; P.items = pl.items; const cp = M.newAccount({ nature: 'debito', name: 'Conta Exemplo' }); P.accounts.push(cp);
+  H.applySlipPlan(P, H.buildSlipPlan(P, [h2]), '2026-03-10');
+  const jb = P.jobs[0], rl = P.rec.find(r => r.id === jb.recId), ns = H.slipsOf(P, jb.id).filter(x => x.tipo === 'normal');
+  const novo = H.pisoOf(ns), velho = H.pisoOf(ns, { legacy: true });
+  assert.equal(novo.exact, false); assert.equal(novo.estimated, true); assert(novo.piso > velho.piso, 'sem o imposto dos eventuais o piso sobe');
+  assert(novo.piso <= 4850 + 0.01 && novo.piso >= 4850 - 150, `perto do líquido de um mês limpo (4.850): ${novo.piso}`);
+  assert.equal(rl.amount, novo.piso); assert.equal(jb.piso, novo.piso);
+  // quem importou na versão antiga tem a regra com o piso baixo: a manutenção corrige sozinha…
+  M.editRec(P, rl, { amount: velho.piso }, '2026-04'); delete jb.piso;
+  assert(H.maintain(P, '2026-03-10', true) > 0); H.maintain(P, '2026-03-10');
+  assert.equal(rl.amount, novo.piso); assert.equal(P.tx.find(t => t.recId === rl.id && t.recM === '2026-05').amount, novo.piso); assert.equal(H.maintain(P, '2026-03-10', true), 0);
+  // …mas não mexe se a pessoa escolheu outro valor
+  M.editRec(P, rl, { amount: 5000 }, '2026-04'); assert.equal(H.maintain(P, '2026-03-10', true), 0); assert.equal(rl.amount, 5000);
+  console.log('piso sem mês limpo e manutenção tests OK');
+}

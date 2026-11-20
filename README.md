@@ -7,7 +7,14 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.9.2.** Novidades:
+**Versão atual: 0.10.0.** Novidades:
+- **0.10.0:**
+  - **Vincular um lançamento que já existe:** ao abrir um lançamento, "Vincular a…" diz o que ele é: pagamento de fatura de cartão, mês de uma conta que se repete (despesa ou receita, com proposta de novo valor previsto), parcela de uma dívida ou transferência. O app guarda o nome que o banco usa e reconhece sozinho nas importações seguintes, inclusive o Pix para o emissor do cartão.
+  - **Para conferir:** a tela de Lançamentos avisa quando algo parece contar errado (pagamento de fatura lançado como despesa, pagamento ligado ao cartão errado, pix devolvido que ficou como despesa e receita, lançamento sem categoria). O app aponta e a pessoa decide.
+  - **Lista mais legível:** a descrição aparece inteira (o nome em destaque, o tipo de operação embaixo), as parcelas vêm por extenso ("parcela 3 de 6") e as compras no cartão ficam agrupadas por fatura, em vez de espalhadas pelos dias do mês.
+  - **Meses:** toque no nome do mês para ir direto a qualquer mês e ano; fora do mês atual aparece o atalho para voltar a ele. Vale para Lançamentos, Resumo e Orçamento.
+  - **Renda prevista mais fiel:** com um único contracheque, e de um mês com eventuais, o piso desconta o imposto que os eventuais puxaram (pela faixa do IR impressa). O que a folha paga fica previsto até o mesmo horizonte da renda (12 meses), para a receita dos meses distantes não parecer cair; além do horizonte, a tela avisa.
+  - **Correções:** fatura "marcada como paga" não tira mais dinheiro da conta; "Fixas e parcelas" tem botões próprios para despesa, receita e parcelado; textos de receita deixam de falar em "despesa" e "pago"; lançamento com data futura começa como pendente.
 - **0.9.2:**
   - **Vincular o pagamento do extrato a uma conta fixa:** na revisão da importação, a linha do boleto pode ser ligada a uma conta que se repete (aluguel, condomínio, mensalidade). A conta guarda o nome que o banco usa e as importações seguintes reconhecem sozinhas, mesmo quando o valor muda.
   - **Novo valor previsto:** quando uma conta fixa é paga com valor diferente, a revisão propõe usar o novo valor nos próximos meses (dá para desmarcar quando foi multa ou desconto pontual).
@@ -103,6 +110,7 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `drive.js` — leitura e gravação no Drive.
   - `store.js` — cópia no aparelho (IndexedDB).
   - `sync.js` — sincronização aparelho ↔ Drive.
+  - `link.js` — vínculos de lançamentos que já existem e a lista "para conferir".
   - `app.js` — telas.
   - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.

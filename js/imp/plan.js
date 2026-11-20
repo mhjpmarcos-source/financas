@@ -1,7 +1,7 @@
 /* Transforma o documento lido num plano de importação: o que é novo, o que já foi importado,
    o que provavelmente já foi lançado à mão (duplicata) e o que é ignorado. Depois aplica o plano. */
 import { norm } from './parse.js';
-import { makeClassifier, merchantKey } from './classify.js';
+import { makeClassifier, merchantKey, payKey } from './classify.js';
 import * as M from '../model.js';
 import * as C from '../calc.js';
 
@@ -46,15 +46,19 @@ export function buildPlan(S, st, { accountId, comp }) {
       if (isCard && l.parc && l.dir !== 'in') { parcInfo(); row.base = S.tx.find(t => t.impKey === impKey); }
       return row;
     }
-    if (l.role === 'cardpay') {
+    // nome que a pessoa já vinculou a um cartão (ex.: o Pix para o emissor): também é pagamento de fatura
+    const payDesc = l.role === 'cardpay' ? 'Pagamento de fatura · ' + (l.detail || l.desc).replace(/^Pagto cart[aã]o cr[eé]dito\s*·?\s*/i, '') : l.desc;
+    const payRule = !isCard && l.dir === 'out' && S.rules && S.rules['pay:' + payKey(payDesc)];
+    const payCard = payRule && payRule.cardId && S.accounts.find(a => a.id === payRule.cardId && a.nature === 'credito');
+    if (l.role === 'cardpay' || payCard) {
       // o dinheiro saiu da conta, mas não é despesa nova (as compras estão no cartão): vira "pagamento de fatura"
       row.status = 'cardpay'; row.reason = 'Pagamento de fatura: tira o dinheiro da conta, mas não conta como despesa (as compras já estão no cartão).';
-      row.options = C.faturaCandidates(S, { accountId, date: l.date, amount: l.amount });
+      row.options = C.faturaCandidates(S, { accountId, cardId: payCard ? payCard.id : undefined, date: l.date, amount: l.amount });
       const best = row.options[0];
       row.fatura = best && (best.exact || best.dist <= 15) ? best : null; // idêntico: vincula; senão, a mais próxima (o usuário pode trocar)
       row.include = true;
       row.tx.cardPay = true; row.tx.faturaKey = row.fatura ? row.fatura.key : '';
-      row.tx.desc = 'Pagamento de fatura · ' + (l.detail || l.desc).replace(/^Pagto cart[aã]o cr[eé]dito\s*·?\s*/i, '');
+      row.tx.desc = payDesc;
       return row;
     }
     if (!isCard && invAccs.length && INVEST.test(norm([l.desc, l.title, l.detail].filter(Boolean).join(' ')))) {

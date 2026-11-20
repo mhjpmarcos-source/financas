@@ -99,9 +99,9 @@ export function balances(S, date, lq) {
     else if (t.type === 'deb') add(t.accountId, -t.amount, t.date);
     else if (t.type === 'trf') { add(t.accountId, -t.amount, t.date); add(t.toAccountId, t.amount, t.date); }
   });
-  // pagamentos de fatura já saem da conta como lançamentos; aqui entra só o que falta:
-  // confirmado (lq): o restante de faturas marcadas como pagas à mão; previsão: o restante de todas
-  faturas(S).forEach(f => { if (f.total <= 0) return; if (lq && f.status !== 'liq') return; if (f.rest > 0) add(f.accountId, -f.rest, f.date); });
+  // o dinheiro só sai da conta por lançamentos (pagamentos de fatura). Fatura "marcada como paga" sem lançamento não tira nada:
+  // foi paga antes de usar o app ou o pagamento já está na conta como outro lançamento. A previsão desconta o que falta das não pagas.
+  if (!lq) faturas(S).forEach(f => { if (f.total > 0 && f.status !== 'liq' && f.rest > 0) add(f.accountId, -f.rest, f.date); });
   Object.keys(out).forEach(k => { out[k] = r2(out[k]); });
   return out;
 }
@@ -161,7 +161,7 @@ export function balanceBreakdown(S, accId, today) {
       else return;
       p.n++;
     });
-    faturas(S).forEach(f => { if (f.total <= 0 || f.accountId !== accId || f.rest <= 0 || (lq && f.status !== 'liq')) return; if (f.date <= limit && f.date > start) p.fat += f.rest; });
+    if (!lq) faturas(S).forEach(f => { if (f.total <= 0 || f.accountId !== accId || f.rest <= 0 || f.status === 'liq') return; if (f.date <= limit && f.date > start) p.fat += f.rest; });
     Object.keys(p).forEach(k => { p[k] = r2(p[k]); });
     p.total = r2((+a.initial || 0) + p.rec - p.deb - p.cardPay + p.trfIn - p.trfOut + p.adj - p.fat);
     return p;

@@ -226,7 +226,7 @@ function slipFlags(slip) {
 /* piso fixo previsto a partir de uma lista de contracheques mensais (já com kind em cada rubrica), em ordem.
    proventos fixos: do último mês cheio; descontos fixos: do último; impostos: do último mês limpo
    (ajustados pela faixa do IR quando os proventos fixos tributáveis mudaram desde então). */
-export function pisoOf(list) {
+export function pisoOf(list, opt = {}) {
   if (!list.length) return null;
   const F = list.map(slipFlags), L = list.length - 1;
   let Si = L; while (Si > 0 && !F[Si].full) Si--; if (!F[Si].full) Si = L;
@@ -240,8 +240,15 @@ export function pisoOf(list) {
   const taxable = rubs => r2(rubs.filter(r => r.col === 'V' && r.kind === 'fix' && !NO_TAX_BASE.test(nrm(r.desc))).reduce((s, r) => s + r.v, 0));
   const faixa = list[Ci].faixa || 0;
   if (hasClean && Si !== Ci && faixa) tax = r2(tax + faixa / 100 * (taxable(baseV) - taxable(list[Ci].rubs)));
+  // ainda sem nenhum mês limpo (ex.: só um contracheque, com substituição ou horas extras): o imposto veio inflado pelos
+  // eventuais. Tira a parte deles pela faixa do IR impressa no contracheque, para o piso não ficar baixo demais.
+  let estimated = false;
+  if (!hasClean && faixa && !opt.legacy) {
+    const evTaxable = sum(list[Ci], r => r.col === 'V' && r.kind === 'ev' && !NO_TAX_BASE.test(nrm(r.desc)) && !/ferias|\b13\b|decimo/.test(nrm(r.desc)));
+    if (evTaxable > 0) { tax = r2(Math.max(0, tax - faixa / 100 * evTaxable)); estimated = true; }
+  }
   const folha = sum(list[L], r => r.col === 'D' && r.kind === 'fix' && r.exp);
-  return { piso: r2(Math.max(0, fixV - fixD - tax)), fixV, fixD, tax, folha, exact: hasClean, fromV: slipMonth(list[Si]), fromTax: slipMonth(list[Ci]), fromD: slipMonth(list[L]) };
+  return { piso: r2(Math.max(0, fixV - fixD - tax)), fixV, fixD, tax, folha, exact: hasClean, estimated, fromV: slipMonth(list[Si]), fromTax: slipMonth(list[Ci]), fromD: slipMonth(list[L]) };
 }
 
 /* o que mudou no fixo deste contracheque mensal em relação aos anteriores (lista em ordem, o atual por último).
@@ -287,6 +294,7 @@ function syncFolha(S, job, edits, today) {
   const normals = normalSlips(S, job.id), last = normals[normals.length - 1];
   if (!last) { S.tx.filter(t => t.folha && t.jobId === job.id && t.prev).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id)); return; }
   const lm = slipMonth(last), day = Math.min(28, Math.max(1, +last.credito.slice(8, 10)));
+  const horizon = mAdd(today.slice(0, 7), M.REC_AHEAD);
   const mk = (key, r) => { let l = S.loans.find(x => x.id === loanIdOf(job.id, key)); if (!l) { l = { id: loanIdOf(job.id, key), dir: 'out', folha: true, jobId: job.id, rk: key, person: r ? r.desc : '', desc: 'Consignado', accountId: '', itemId: '', total: 0, n: 0, created: Date.now(), upd: 0 }; S.loans.push(l); } return l; };
   // correções feitas na revisão
   edits.forEach(e => { const l = mk(e.key, e); if (e.pi > 0) Object.assign(l, { i0: e.pi, n: e.pn || 0, asOf: e.pm, manual: true }); else delete l.manual; revive(S, l); });
@@ -309,8 +317,10 @@ function syncFolha(S, job, edits, today) {
   last.rubs.filter(r => r.col === 'D' && r.kind === 'fix' && r.exp).forEach(r => {
     const key = rubKey(r), l = active.get(key), p = l && loanParcAt(l, lm);
     if (!l && LOAN.test(nrm(r.desc))) return; // consignado que a pessoa encerrou
-    const count = l ? (p && p.n ? Math.min(120, p.n - p.i) : 12) : 12;
-    for (let k = 1; k <= count; k++) { const m = mAdd(lm, k); want.set(folhaId(job.id, key, m), { r, key, m, l }); }
+    // mesmo horizonte das contas que se repetem (crédito até 12 meses à frente): além dele não há receita prevista, e mostrar
+    // só os descontos faria a renda parecer cair. O consignado para antes, na última parcela.
+    const count = l && p && p.n ? p.n - p.i : 999;
+    for (let k = 1; k <= count; k++) { const m = mAdd(lm, k); if (mAdd(m, 1) > horizon) break; want.set(folhaId(job.id, key, m), { r, key, m, l }); }
   });
   want.forEach((w, id) => {
     let d = S.tx.find(t => t.id === id);
@@ -497,7 +507,7 @@ export function applySlipPlan(S, plan, today = M.todayISO()) {
     }
     if (startM > rule.start) { rule.start = startM; M.touch(rule); }
     S.tx.filter(t => t.recId === rule.id && t.prev && t.recM < startM).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
-    job.recId = rule.id; rule.jobId = job.id;
+    job.recId = rule.id; rule.jobId = job.id; job.piso = P.piso;
     const cur = last.txId && S.tx.find(t => t.id === last.txId);
     if (cur && !cur.recId) { const pv = S.tx.find(t => t.recId === rule.id && t.recM === cm && t.prev); if (pv) M.removeRecord(S, 'tx', pv.id); if (!S.tx.some(t => t.recId === rule.id && t.recM === cm)) { cur.recId = rule.id; cur.recM = cm; M.touch(cur); } }
     if (rule.end) M.reopenRec(S, rule);
@@ -526,6 +536,36 @@ export function setLoanParc(S, loanId, i, n, asOf, today = M.todayISO()) {
 }
 
 /* exclui um contracheque guardado e os lançamentos que ele criou */
+/* manutenção ao abrir o app: (1) recalcula o piso quando a fórmula ou os dados mudaram e a pessoa não mexeu no valor da
+   regra; (2) estende a agenda do que a folha paga até o horizonte; (3) ajusta o líquido previsto pelo fim dos consignados.
+   Devolve quantas coisas mudariam (dry) ou mudaram. */
+export function maintain(S, today = M.todayISO(), dry = false) {
+  let c = 0;
+  (S.jobs || []).forEach(job => {
+    const normals = normalSlips(S, job.id), last = normals[normals.length - 1]; if (!last) return;
+    const rule = job.recId && (S.rec || []).find(r => r.id === job.recId), P = pisoOf(normals);
+    if (rule && P && P.piso > 0) {
+      const ref = job.piso != null ? job.piso : pisoOf(normals, { legacy: true }).piso; // o que o app tinha calculado
+      if (Math.abs(rule.amount - ref) < 0.005 && Math.abs(P.piso - rule.amount) > 0.005) { c++; if (!dry) { M.editRec(S, rule, { amount: P.piso }, mAdd(last.credito.slice(0, 7), 1)); job.piso = P.piso; M.touch(job); } }
+    }
+    // agenda da folha: falta algum mês até o horizonte, ou sobra algum além dele?
+    const horizon = mAdd(today.slice(0, 7), M.REC_AHEAD), lm = slipMonth(last);
+    const sched = S.tx.filter(t => t.folha && t.jobId === job.id && t.prev);
+    const fixes = last.rubs.filter(r => r.col === 'D' && r.kind === 'fix' && r.exp);
+    const stale = sched.some(t => mAdd(t.folhaM, 1) > horizon) || fixes.some(r => {
+      const key = rubKey(r), l = (S.loans || []).find(x => x.id === loanIdOf(job.id, key)), isLoan = LOAN.test(nrm(r.desc));
+      if (isLoan && (!l || l.end)) return false;
+      const p = l && loanParcAt(l, lm), lastM = mAdd(horizon, -1), endM = p && p.n ? mAdd(lm, p.n - p.i) : lastM;
+      const until = endM < lastM ? endM : lastM;
+      return until > lm && !S.tx.some(t => t.id === folhaId(job.id, key, until));
+    });
+    if (stale) { c++; if (!dry) syncFolha(S, job, [], today); }
+  });
+  c += M.ensureRecurring(S, today, dry); // os meses novos da renda prevista entram antes do ajuste pelo fim dos consignados
+  c += adjustForecast(S, dry);
+  return c;
+}
+
 /* a pessoa informa que o consignado acabou (quitou, refinanciou, fez portabilidade): tira as parcelas agendadas */
 export function closeLoan(S, loanId, today = M.todayISO()) {
   const l = (S.loans || []).find(x => x.id === loanId), job = l && (S.jobs || []).find(j => j.id === l.jobId); if (!job) return;

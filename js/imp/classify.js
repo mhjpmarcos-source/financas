@@ -16,6 +16,9 @@ export function merchantKey(desc) {
   return words.slice(0, 3).join(' ');
 }
 
+/* chave do nome que o banco usa num pagamento de fatura (com ou sem o prefixo que o app coloca) */
+export const payKey = desc => merchantKey(String(desc || '').replace(/^Pagamento de fatura\s*·\s*/i, ''));
+
 const DICT = [
   [/PANIFIC|PADARIA|\bPAES\b|PANIFICADORA|CONFEITARIA/, 'Padaria'],
   [/SUPERMERC|ATACAD|ASSAI|CARREFOUR|PAO DE ACUCAR|SAMS\b|SAM S|EXTRA HIPER|BIG BOMPRECO|COMERCIAL DE ALIMENTOS|HORTIFRUTI|SACOLAO|MERCADINHO|\bMERCADO\b(?! PAGO| LIVRE)|TARUMA|DIA BRASIL|GUANABARA|ZAFFARI|SONDA|COMPER|OBA HORT/, 'Mercado'],

@@ -25,7 +25,7 @@ await p.fill('[data-pi]', '6'); await p.dispatchEvent('[data-pi]', 'change'); aw
 assert.match(await p.textContent('.rgrid.parc'), /corrigida por você/);
 // trocar uma rubrica de fixa para eventual tira ela do piso; voltar recoloca
 const grat = p.locator('li.irow', { hasText: 'Gratificação de Função' }).locator('[data-kind]');
-await grat.selectOption('ev'); await wait(200); assert.match(await p.textContent('#sheet'), /Piso previsto: R\$\s3\.850,00/);
+await grat.selectOption('ev'); await wait(200); assert.match(await p.textContent('#sheet'), /Piso previsto: R\$\s4\.125,00/); // 4.850 − 1.000 + 27,5% de 1.000 (o imposto que o eventual puxou)
 await p.click('details[data-g=ev] summary'); await p.locator('li.irow', { hasText: 'Gratificação de Função' }).locator('[data-kind]').selectOption('fix'); await wait(200);
 assert.match(await p.textContent('#sheet'), /Piso previsto: R\$\s4\.850,00/);
 await p.screenshot({ path: shot('cc-revisao'), fullPage: false });
@@ -63,7 +63,10 @@ assert.match(await p.textContent('#sheet'), /parcela 7 de 30 · faltam 23 · ter
 await p.screenshot({ path: shot('cc-consignado') });
 await p.click('#lp-cancel'); await p.waitForSelector('[data-lp]'); assert.match(await p.textContent('[data-lp]'), /parcela 7 de 30/);
 assert.match(await p.textContent('#sheet'), /Outros descontos pagos pela folha/);
-d = drive.current(); assert.equal(d.tx.find(t => t.folha && !t.prev && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (7/30)'); assert.equal(d.tx.filter(t => t.loanId && t.prev).length, 23);
+d = drive.current(); assert.equal(d.tx.find(t => t.folha && !t.prev && /Empr/.test(t.desc)).desc, 'Empréstimo Banco Exemplo 1 (7/30)'); { // agenda do consignado: até a última parcela (faltam 23) ou até o horizonte da renda prevista (12 meses à frente de hoje), o que vier primeiro
+  const now = new Date(), until = now.getFullYear() * 12 + now.getMonth() + 12 - 1, lm = 2026 * 12;
+  assert.equal(d.tx.filter(t => t.loanId && t.prev).length, Math.max(0, Math.min(23, until - lm)));
+}
 await p.click('[data-slip]'); await p.waitForSelector('#sd-back'); assert.match(await p.textContent('#sheet'), /Empréstimo Banco Exemplo 1 \(7\/30\)/); assert.match(await p.textContent('#sheet'), /paga pela folha em Parcela de empréstimo/);
 await p.click('#sd-back'); await p.click('#jb-close');
 // o consignado aparece junto das outras dívidas, em "Eu devo"
