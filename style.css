@@ -250,3 +250,7 @@ body.locked #app, body.locked #sheet, body.locked .sheet.ask{visibility:hidden}
 .calc li.tot{font-weight:700; border-bottom:0; border-top:1px solid var(--line); margin-top:2px; padding-top:7px}
 .card.flat{background:var(--bg); margin:10px 0}
 .card.flat h2{font-size:15px}
+
+/* 0.9.2: vínculo da linha do extrato com conta que se repete */
+.irow .check.fixf{margin:6px 0 0 32px; font-size:14px}
+.irow .link[data-unrec]{margin-left:32px}

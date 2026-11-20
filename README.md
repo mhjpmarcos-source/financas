@@ -7,7 +7,10 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.9.1.** Novidades:
+**Versão atual: 0.9.2.** Novidades:
+- **0.9.2:**
+  - **Vincular o pagamento do extrato a uma conta fixa:** na revisão da importação, a linha do boleto pode ser ligada a uma conta que se repete (aluguel, condomínio, mensalidade). A conta guarda o nome que o banco usa e as importações seguintes reconhecem sozinhas, mesmo quando o valor muda.
+  - **Novo valor previsto:** quando uma conta fixa é paga com valor diferente, a revisão propõe usar o novo valor nos próximos meses (dá para desmarcar quando foi multa ou desconto pontual).
 - **0.9.1:**
   - **Pago pela folha, sem conta:** os descontos do contracheque que são gastos da pessoa (plano de saúde, sindicato, consignado) deixam de ficar presos à conta do salário. São despesas pagas pela folha, registradas mesmo quando o líquido não é lançado em nenhuma conta, e os meses seguintes já ficam previstos.
   - **Consignado é uma dívida:** aparece em Agenda › Dívidas, em "Eu devo", com credor, parcela, total, término e quanto falta. Cada contracheque quita uma parcela; as seguintes ficam agendadas até a última. Dá para corrigir a parcela e o total, e marcar que o empréstimo acabou (quitação, refinanciamento, portabilidade).

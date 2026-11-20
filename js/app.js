@@ -12,7 +12,7 @@ import * as IP from './imp/plan.js';
 import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 
-export const VERSION = '0.9.1';
+export const VERSION = '0.9.2';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -704,6 +704,7 @@ function reviewSheet(stRaw, fileName, preset) {
         return l.length ? `<optgroup label="${n === 'credito' ? 'Cartões' : 'Contas'}">${l.map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : '';
       }).join('');
       const chk = st.check || {};
+      const taken = new Set(plan ? plan.rows.filter(r => r.status === 'prev' && r.match).map(r => r.match.id) : []);
       const rowsHTML = !plan ? '' : plan.rows.filter(r => filter === 'all' || r.status === filter || (filter === 'new' && (r.status === 'prev' || r.status === 'inv')) || (filter === 'ignored' && (r.status === 'cardpay' || r.status === 'already'))).map(r => {
         const l = r.line, sign = r.tx && r.tx.amount < 0 ? '−' : '';
         const amt = `<span class="num ${l.dir === 'in' && !isCard ? 'pos' : ''}">${l.dir === 'in' ? (isCard ? '−' : '+') : ''}${C.brl(l.amount)}</span>`;
@@ -714,7 +715,10 @@ function reviewSheet(stRaw, fileName, preset) {
           <select data-inv="${r.idx}">${r.invOptions.map(id => `<option value="${id}" ${id === r.invId ? 'selected' : ''}>${esc((accById(id) || {}).name || '')}</option>`).join('')}<option value="" ${r.status === 'inv' ? '' : 'selected'}>Não é investimento</option></select>`
           + (r.status === 'new' ? `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>` : '');
         else if (r.status === 'new') body = `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>${r.how && r.how !== 'escolhida' ? `<small class="hint">sugerida por ${r.how}</small>` : ''}`;
-        if (r.status === 'prev') body = `<p class="hint">✓ ${esc(r.reason)}: <b>${esc(r.match.desc)}</b>, previsto ${C.brl(Math.abs(r.match.amount))}. O lançamento previsto passa a ter o valor real, sem duplicar.</p>`;
+        if (r.status === 'new' && (r.recOptions || []).some(o => !taken.has(o.id))) body += `<select data-rec="${r.idx}" aria-label="Vincular a uma conta que se repete"><option value="">Não é uma conta fixa cadastrada</option>${r.recOptions.filter(o => !taken.has(o.id)).map(o => `<option value="${o.id}">É o pagamento de: ${esc(o.desc)} · ${shortM(o.recM || o.date.slice(0, 7))} · previsto ${C.brl(o.amount)}</option>`).join('')}</select>`;
+        if (r.status === 'prev') body = `<p class="hint">✓ ${esc(r.reason)}: <b>${esc(r.match.desc)}</b>, previsto ${C.brl(Math.abs(r.match.amount))}. O lançamento previsto passa a ter o valor real, sem duplicar.${r.linked ? ' Nas próximas importações o app reconhece este nome sozinho.' : ''}</p>`
+          + (r.newAmount ? `<label class="check fixf"><input type="checkbox" data-fixf="${r.idx}" ${r.fixFuture ? 'checked' : ''}> <span>O valor mudou de ${C.brl(r.oldAmount)} para <b>${C.brl(r.newAmount)}</b>: usar o novo valor como previsto dos próximos meses</span></label>` : '')
+          + (r.linked ? `<button type="button" class="link" data-unrec="${r.idx}">Desfazer o vínculo</button>` : '');
         if (r.status === 'dup') body = `<p class="hint">Parece igual a <b>${esc(r.match.desc || (itemById(r.match.itemId) || {}).name || '')}</b> de ${C.fmtD(r.match.date)} (${C.brl(r.match.amount)}), já lançado. Marque para importar mesmo assim.</p>`;
         if (r.status === 'ignored' || r.status === 'already') body = `<p class="hint">${esc(r.reason || '')}</p>`;
         if (r.status === 'cardpay') {
@@ -747,6 +751,8 @@ function reviewSheet(stRaw, fileName, preset) {
       if (e.target.dataset.inc) { const r = plan.rows[+e.target.dataset.inc]; r.include = e.target.checked; return draw(); }
       if (e.target.dataset.fat) { IP.setRowFatura(plan.rows[+e.target.dataset.fat], e.target.value); return draw(); }
       if (e.target.dataset.inv) { IP.setRowInv(plan, plan.rows[+e.target.dataset.inv], e.target.value); return draw(); }
+      if (e.target.dataset.rec) { IP.setRowRec(S(), plan, plan.rows[+e.target.dataset.rec], e.target.value); return draw(); }
+      if (e.target.dataset.fixf) { plan.rows[+e.target.dataset.fixf].fixFuture = e.target.checked; return; }
       if (e.target.id === 'r-paid') { plan.alreadyPaid = e.target.checked; return; }
       if (e.target.id === 'r-proj') { plan.project = e.target.checked; return draw(); }
       if (e.target.id === 'r-ini') { plan.setInitial = e.target.checked ? { value: st.saldoIni, date: st.saldoIniDate } : null; return draw(); }
@@ -759,6 +765,7 @@ function reviewSheet(stRaw, fileName, preset) {
     };
     panel.onclick = async e => {
       const f = e.target.closest('[data-f]'); if (f) { filter = f.dataset.f; return draw(); }
+      const un = e.target.closest('[data-unrec]'); if (un) { IP.setRowRec(S(), plan, plan.rows[+un.dataset.unrec], ''); return draw(); }
       if (e.target.id === 'r-cancel') return closeSheet();
       if (e.target.id === 'r-go') {
         let res = null;
@@ -1639,6 +1646,7 @@ function recSheet(id) {
     panel.innerHTML = `<h2>${esc(r.desc)}</h2>
       <p class="hint">${r.kind === 'var' ? (s.n ? `Últimos ${s.n} meses pagos: média dos 3 últimos ${C.brl(s.avg3)}, menor ${C.brl(s.min)}, maior ${C.brl(s.max)}, último ${C.brl(s.last)}.` : 'Ainda sem meses pagos: usa a estimativa abaixo.') + ` Previsto para os próximos meses: <b>${C.brl(est)}</b>.` : `Fixa: ${C.brl(r.amount)} todo mês.`}
         Desde ${shortM(r.start)}${r.end ? `, ${ended ? 'encerrada em' : 'até'} ${shortM(r.end)}` : ', sem data para acabar'}.</p>
+      ${(r.keys || []).length ? `<p class="hint">No extrato, é reconhecida por: <b>${r.keys.map(esc).join('</b>, <b>')}</b>. <button type="button" class="link" id="rc-forget">Esquecer</button></p>` : '<p class="hint">Ao importar o extrato, escolha esta conta na linha do pagamento: o app guarda o nome que o banco usa e passa a reconhecer sozinho, mesmo quando o valor muda.</p>'}
       <label for="rc-desc">Descrição</label><input id="rc-desc" value="${esc(r.desc)}">
       <div class="seg small" id="rc-kind"><button type="button" data-k="fixa" aria-pressed="${r.kind === 'fixa'}">Fixa</button><button type="button" data-k="var" aria-pressed="${r.kind === 'var'}">Valor variável</button></div>
       <div class="grid2"><div><label for="rc-val" id="rc-vallbl">${r.kind === 'var' ? 'Estimativa (R$)' : 'Valor (R$)'}</label><input id="rc-val" inputmode="decimal" value="${moneyText(r.amount)}"></div>
@@ -1649,6 +1657,7 @@ function recSheet(id) {
       <p class="hint">Salvar muda este mês e os próximos que ainda não foram pagos.</p>
       <div class="actions wrap"><button class="btn danger" id="rc-del">Excluir</button>${ended || r.end ? '<button class="btn" id="rc-open">Reativar</button>' : '<button class="btn" id="rc-end">Encerrar</button>'}<button class="btn" id="rc-c">Cancelar</button><button class="btn primary" id="rc-ok">Salvar</button></div>`;
     let kind = r.kind;
+    if (panel.querySelector('#rc-forget')) panel.querySelector('#rc-forget').onclick = async () => { await sync.commit(st2 => { const x = st2.rec.find(y => y.id === id); if (x) { delete x.keys; delete x.words; M.touch(x); } }); toast('Nome do banco esquecido: o app volta a reconhecer só pelo valor e pela descrição.'); recSheet(id); };
     panel.querySelector('#rc-kind').onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; panel.querySelectorAll('#rc-kind [data-k]').forEach(x => x.setAttribute('aria-pressed', x === b)); panel.querySelector('#rc-vallbl').textContent = kind === 'var' ? 'Estimativa (R$)' : 'Valor (R$)'; };
     panel.querySelector('#rc-c').onclick = closeSheet;
     panel.querySelector('#rc-ok').onclick = async () => {

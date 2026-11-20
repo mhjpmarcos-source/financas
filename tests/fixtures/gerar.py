@@ -41,6 +41,10 @@ open(os.path.join(here, 'extrato-ficticio-invest.csv'), 'w', encoding='cp1252').
 '"02/03/2026","Aplicação CDB","CDB EXEMPLO","2001","-500,00","Saída"\n'
 '"10/03/2026","Resgate Tesouro Direto","TESOURO","2002","200,00","Entrada"\n'
 '"11/03/2026","Compra com Cartão","11/03 10:00 PADARIA PAO QUENTE","2003","-10,00","Saída"\n')
+open(os.path.join(here, 'extrato-ficticio-boletos.csv'), 'w', encoding='cp1252').write(
+'"Data","Lançamento","Detalhes","Nº documento","Valor","Tipo Lançamento"\n'
+'"10/03/2026","Pagamento de Boleto","IMOBILIARIA EXEMPLO LTDA","3001","-2.150,00","Saída"\n'
+'"12/03/2026","Pagamento de Boleto","CONDOMINIO EDIFICIO FICTICIO","3002","-640,00","Saída"\n')
 # ---------- contracheques fictícios ----------
 # Como muitos sistemas de folha: duas vias por página, colunas de proventos e descontos SEM título em texto,
 # totais numa linha só com dois valores, líquido na linha do banco e uma linha de bases só com números.

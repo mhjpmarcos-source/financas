@@ -1,7 +1,7 @@
 // Guarda os arquivos do próprio app para abrir sem internet. Nada do Google (login, Drive) passa por aqui.
 // O leitor de PDF (vendor/pdfjs, ~1,5 MB) não entra na instalação: é guardado na primeira importação.
 // Ao mudar qualquer arquivo do app, aumente VERSION para os aparelhos baixarem a versão nova.
-const VERSION = 'v0.9.1';
+const VERSION = 'v0.9.2';
 const SHELL = ['./', 'index.html', 'style.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/auth.js', 'js/calc.js', 'js/drive.js', 'js/model.js', 'js/store.js', 'js/sync.js', 'js/lock.js', 'js/pix.js', 'js/imp/parcelas.js', 'js/imp/holerite.js',
   'js/imp/pdftext.js', 'js/imp/parse.js', 'js/imp/classify.js', 'js/imp/plan.js',

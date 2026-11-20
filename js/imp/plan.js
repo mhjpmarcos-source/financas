@@ -73,20 +73,42 @@ export function buildPlan(S, st, { accountId, comp }) {
       if (same && !same.prev) { row.status = 'already'; row.reason = 'Esta parcela já está lançada'; row.base = same; return row; }
       if (same) return prevRow(row, same, 'Parcela que estava prevista');
     }
-    const prev = findPrev(S, row.tx, l, isCard, used, c.itemId);
+    row.key = c.key;
+    const prev = findPrev(S, row.tx, l, isCard, used, c.itemId, c.key);
     if (prev) return prevRow(row, prev, prev.recId ? 'Confirma o valor previsto da conta que se repete' : 'Parcela que estava prevista');
     const dup = findManual(S, row.tx, used, isCard);
     if (dup) { used.add(dup.id); row.status = 'dup'; row.match = dup; row.reason = 'Parece já lançado'; if (row.parcKey) row.base = dup; return row; }
     row.itemId = c.itemId; row.how = c.how; row.key = c.key;
     row.status = 'new'; row.include = true;
+    row.recOptions = recOptions(S, row.tx, isCard); // contas que se repetem que esta linha pode estar pagando (vínculo à mão)
     return row;
-    function prevRow(r, x, reason) { used.add(x.id); r.status = 'prev'; r.match = x; r.reason = reason; r.include = true; r.itemId = x.itemId; return r; }
+    function prevRow(r, x, reason) { used.add(x.id); r.status = 'prev'; r.match = x; r.reason = reason; r.include = true; r.itemId = x.itemId; variation(S, r); return r; }
   });
   return { rows, isCard, accountId, comp, projN, project: projN > 0 };
 }
 
+/* meses previstos de contas que se repetem, da mesma conta e perto da data: opções para vincular uma linha à mão */
+function recOptions(S, t, isCard) {
+  const amt = Math.abs(t.amount), near = x => { const xa = Math.abs(x.amount); return amt >= xa * 0.25 && amt <= xa * 4; }; // valor na mesma ordem de grandeza
+  return S.tx.filter(x => x.prev && x.recId && x.accountId === t.accountId && x.type === t.type && near(x) && (isCard ? C.txComp(S, x) === t.comp : days(x.date, t.date) <= 31))
+    .sort((a, b) => days(a.date, t.date) - days(b.date, t.date)).slice(0, 12).map(x => ({ id: x.id, desc: x.desc, amount: Math.abs(x.amount), date: x.date, recM: x.recM }));
+}
+/* conta fixa paga com valor diferente do previsto: propõe usar o novo valor nos próximos meses */
+function variation(S, row) {
+  delete row.newAmount; delete row.oldAmount; delete row.fixFuture;
+  const x = row.match, rr = x && x.recId && (S.rec || []).find(y => y.id === x.recId);
+  if (rr && rr.kind === 'fixa' && Math.abs(Math.abs(row.tx.amount) - rr.amount) > 0.005) { row.newAmount = Math.abs(row.tx.amount); row.oldAmount = rr.amount; row.fixFuture = true; }
+}
+/* vincula à mão uma linha nova a um mês previsto de conta que se repete (txId), ou desfaz (txId vazio).
+   Ao aplicar, a conta aprende o nome que veio do banco e as próximas importações vinculam sozinhas. */
+export function setRowRec(S, plan, row, txId) {
+  const x = txId && S.tx.find(t => t.id === txId && t.prev);
+  if (x) { Object.assign(row, { status: 'prev', match: x, reason: 'Vinculado por você', linked: true, include: true, itemId: x.itemId }); variation(S, row); }
+  else { Object.assign(row, { status: 'new', match: null, reason: '', linked: false, include: true }); variation(S, row); }
+}
+
 /* lançamento previsto (parcela futura ou mês de conta que se repete) que esta linha confirma */
-function findPrev(S, t, l, isCard, used, itemId) {
+function findPrev(S, t, l, isCard, used, itemId, lineKey) {
   const amt = Math.abs(t.amount);
   const cands = S.tx.filter(x => x.prev && !used.has(x.id) && x.accountId === t.accountId && x.type === t.type);
   if (isCard && l.parc) {
@@ -101,13 +123,18 @@ function findPrev(S, t, l, isCard, used, itemId) {
     if (!x.recId) continue;
     const r = (S.rec || []).find(y => y.id === x.recId); if (!r) continue;
     const xa = Math.abs(x.amount), dd = days(x.date, t.date);
-    if (isCard ? C.txComp(S, x) !== t.comp : dd > 12) continue;
+    // o nome que o banco usa já foi vinculado a esta conta (à mão ou numa importação anterior): vale mesmo com valor diferente
+    const known = !!(lineKey && (r.keys || []).includes(lineKey));
+    if (isCard ? C.txComp(S, x) !== t.comp : dd > (known ? 20 : 12)) continue;
     const exact = Math.abs(xa - amt) < 0.005;
-    const okAmt = r.kind === 'fixa' ? Math.abs(xa - amt) <= Math.max(0.5, amt * 0.03) : amt >= xa * 0.3 && amt <= xa * 2.5;
-    if (!okAmt) continue;
-    const rw = words(r.desc + ' ' + (r.words || ''));
-    if (!([...lw].some(w => rw.has(w)) || (itemId && itemId === x.itemId) || (r.kind === 'fixa' && exact))) continue;
-    const score = (isCard ? 0 : dd) + (exact ? 0 : 1);
+    if (!known) {
+      const okAmt = r.kind === 'fixa' ? Math.abs(xa - amt) <= Math.max(0.5, amt * 0.03) : amt >= xa * 0.3 && amt <= xa * 2.5;
+      if (!okAmt) continue;
+      const rw = words(r.desc + ' ' + (r.words || ''));
+      if (!([...lw].some(w => rw.has(w)) || (itemId && itemId === x.itemId) || (r.kind === 'fixa' && exact))) continue;
+    }
+    // entre contas com o mesmo nome no banco (ex.: aluguel e condomínio na mesma administradora), a de valor mais próximo
+    const score = known ? -1000 + Math.abs(xa - amt) / Math.max(amt, 1) * 100 + (isCard ? 0 : dd / 10) : (isCard ? 0 : dd) + (exact ? 0 : 1);
     if (!best || score < best.score) best = { x, score };
   }
   return best ? best.x : null;
@@ -158,7 +185,15 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
       if (r.tx.type !== 'cred') x.status = 'liq'; else x.comp = r.tx.comp;
       if (x.parcKey) x.desc = r.tx.desc;
       ['impKey', 'rawDesc', 'doc', 'cardRef'].forEach(k => { if (r.tx[k]) x[k] = r.tx[k]; });
-      if (x.recId) { const rr = (S.rec || []).find(y => y.id === x.recId); if (rr) { rr.words = M.normDesc(r.line.desc); M.touch(rr); } }
+      if (x.recId) {
+        const rr = (S.rec || []).find(y => y.id === x.recId);
+        if (rr) {
+          rr.words = M.normDesc(r.line.desc);
+          if (r.key && !(rr.keys || []).includes(r.key)) rr.keys = [...(rr.keys || []), r.key].slice(-8); // nome do banco aprendido
+          if (r.fixFuture && r.newAmount && rr.kind === 'fixa') M.editRec(S, rr, { amount: r.newAmount }, C.mAdd(x.recM, 1)); // novo valor previsto daqui em diante
+          M.touch(rr);
+        }
+      }
       M.touch(x); created++;
       if (plan.project && r.parcKey) M.projectParcels(S, x, r.parcKey, r.parcI, r.parcN, r.cleanDesc);
       return;
