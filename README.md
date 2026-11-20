@@ -7,7 +7,8 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.10.1.** Novidades:
+**Versão atual: 0.10.2.** Novidades:
+- **0.10.2:** **fatura que o cartão não gerou** (mudança de vencimento): na tela da fatura que só tem parcelas previstas, "avise que esta fatura não existiu" passa parcelas e pagamentos para a fatura seguinte; as parcelas previstas acompanham a última parcela real de cada compra.
 - **0.10.1:** a busca de lançamentos atualiza só os resultados enquanto se digita (no iPhone o teclado não pisca nem troca de tipo a cada tecla); "Para conferir" também aponta despesa cuja descrição diz que é pagamento de fatura.
 - **0.10.0:**
   - **Vincular um lançamento que já existe:** ao abrir um lançamento, "Vincular a…" diz o que ele é: pagamento de fatura de cartão, mês de uma conta que se repete (despesa ou receita, com proposta de novo valor previsto), parcela de uma dívida ou transferência. O app guarda o nome que o banco usa e reconhece sozinho nas importações seguintes, inclusive o Pix para o emissor do cartão.

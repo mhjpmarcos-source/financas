@@ -215,6 +215,7 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
     }
   });
   // fatura importada que já foi paga (antes de começar a usar o app, ou paga por fora)
+  if (plan.isCard) M.realignParcels(S, plan.accountId); // parcela real que chegou numa fatura depois da prevista: as seguintes acompanham
   if (plan.isCard && plan.alreadyPaid && plan.comp) {
     const key = plan.accountId + '|' + plan.comp;
     S.faturaMeta[key] = Object.assign({}, S.faturaMeta[key], { status: 'liq', upd: Date.now() }); paid++;

@@ -322,13 +322,34 @@ export function linkToRec(S, r, txIds) {
 export const normDesc = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 export const parcKey = (cardId, desc, date, n) => hashStr([cardId, normDesc(desc), date, n].join('|'));
 export const parcId = (key, k) => `t_p_${key}_${k}`;
+/* fatura que o cartão não gerou (mudança de vencimento): faturaMeta[cartão|mês].skip. As compras e parcelas daquele
+   ciclo vão para a fatura seguinte. */
+export const isSkipped = (S, cardId, comp) => !!(S.faturaMeta && S.faturaMeta[cardId + '|' + comp] && S.faturaMeta[cardId + '|' + comp].skip);
+export function skipComp(S, cardId, comp) { let c = comp; for (let i = 0; i < 24 && isSkipped(S, cardId, c); i++) c = mAddM(c, 1); return c; }
+/* k faturas depois de comp, sem contar as que não existiram */
+export function advComp(S, cardId, comp, k) { let c = comp; for (let i = 0; i < k; i++) c = skipComp(S, cardId, mAddM(c, 1)); return c; }
+/* parcelas previstas acompanham a última parcela real da mesma compra (e pulam as faturas que não existiram) */
+export function realignParcels(S, cardId) {
+  const g = new Map(); let n = 0;
+  S.tx.filter(t => t.type === 'cred' && t.accountId === cardId && t.parcKey && t.comp).forEach(t => { if (!g.has(t.parcKey)) g.set(t.parcKey, []); g.get(t.parcKey).push(t); });
+  g.forEach(list => {
+    const real = list.filter(t => !t.prev).sort((a, b) => b.parcI - a.parcI)[0];
+    const anchor = real || list.slice().sort((a, b) => a.parcI - b.parcI)[0];
+    const base = real ? anchor.comp : skipComp(S, cardId, anchor.comp);
+    list.filter(t => t.prev && t.parcI >= anchor.parcI && t !== real).forEach(t => {
+      const want = advComp(S, cardId, base, t.parcI - anchor.parcI);
+      if (t.comp !== want) { t.comp = want; touch(t); n++; }
+    });
+  });
+  return n;
+}
 export function projectParcels(S, base, key, i, n, cleanDesc) {
   let c = 0;
   for (let k = i + 1; k <= n; k++) {
     const id = parcId(key, k);
     if (S.deleted[id] || S.tx.some(t => t.id === id)) continue;
     const t = newTx({ type: 'cred', date: base.date, accountId: base.accountId, itemId: base.itemId, amount: base.amount, desc: `${cleanDesc} (${k}/${n})`, signed: true, origin: 'previsao' });
-    Object.assign(t, { id, comp: mAddM(base.comp, k - i), prev: true, parcKey: key, parcI: k, parcN: n });
+    Object.assign(t, { id, comp: advComp(S, base.accountId, base.comp, k - i), prev: true, parcKey: key, parcI: k, parcN: n });
     S.tx.push(t); c++;
   }
   return c;

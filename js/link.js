@@ -39,6 +39,20 @@ export function undoCardPay(S, txId) {
   return true;
 }
 
+/* ---------- fatura que o cartão não gerou (mudança de vencimento) ---------- */
+/* marca a fatura como inexistente: parcelas previstas e pagamentos ligados a ela passam para a fatura seguinte */
+export function skipFatura(S, cardId, comp, on = true) {
+  const key = cardId + '|' + comp;
+  if (on && S.tx.some(t => t.type === 'cred' && t.accountId === cardId && !t.prev && t.comp === comp)) return { ok: false, error: 'Esta fatura tem compras reais: não dá para dizer que ela não existiu.' };
+  S.faturaMeta[key] = Object.assign({}, S.faturaMeta[key], { skip: on, upd: Date.now() });
+  const next = M.skipComp(S, cardId, comp);
+  let pays = 0;
+  if (on) S.tx.filter(t => t.cardPay && t.faturaKey === key).forEach(t => { t.faturaKey = cardId + '|' + next; M.touch(t); pays++; });
+  // as parcelas previstas seguem a última parcela real de cada compra, pulando a fatura que não existiu
+  const moved = M.realignParcels(S, cardId);
+  return { ok: true, next, pays, moved };
+}
+
 /* ---------- conta que se repete ---------- */
 export const ruleOptions = (S, t) => (S.rec || []).filter(r => r.type === t.type && !(r.end && r.end < monthOf(S, t)));
 /* o lançamento passa a ser o mês da conta que se repete. Devolve { ok, month, was, error } */

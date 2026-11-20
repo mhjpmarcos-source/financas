@@ -112,3 +112,30 @@ assert.equal(C.monthSummary(S, '2026-06').desp, d0 - 700); const b1 = C.balances
 const sc = M.newTx({ type: 'deb', date: '2026-06-19', accountId: conta.id, amount: 5, desc: 'sem categoria' }); sc.itemId = ''; S.tx.push(sc);
 assert(L.review(S).nocat.some(t => t.id === sc.id));
 console.log('vínculos e "para conferir" tests OK');
+
+// ---- fatura que o cartão não gerou (mudança de vencimento) ----
+{
+  const Z = M.emptyState(); Z.config.setupDone = true; Z.groups = pl.groups; Z.items = pl.items;
+  const cz = M.newAccount({ nature: 'debito', name: 'Conta' }), kz = M.newAccount({ nature: 'credito', name: 'Cartão Z', closeDay: 30, dueDay: 12, payAccount: cz.id }); Z.accounts.push(cz, kz);
+  // compra em 4x importada na fatura de out: 1/4 real, 2/4 a 4/4 previstas em nov, dez, jan
+  const p1 = M.newTx({ type: 'cred', date: '2026-09-10', accountId: kz.id, itemId: Z.items[0].id, amount: 100, desc: 'LOJA EXEMPLO (1/4)', signed: true });
+  Object.assign(p1, { comp: '2026-10', parcKey: 'pkz', parcI: 1, parcN: 4, origin: 'import' }); Z.tx.push(p1);
+  M.projectParcels(Z, p1, 'pkz', 1, 4, 'LOJA EXEMPLO');
+  const comps = () => Z.tx.filter(t => t.parcKey === 'pkz').sort((a, b) => a.parcI - b.parcI).map(t => C.txComp(Z, t));
+  assert.deepEqual(comps(), ['2026-10', '2026-11', '2026-12', '2027-01']);
+  const pg = M.newTx({ type: 'deb', date: '2026-11-03', accountId: cz.id, amount: 500, desc: 'Pix' }); Object.assign(pg, { cardPay: true, faturaKey: kz.id + '|2026-11' }); Z.tx.push(pg);
+  const r = L.skipFatura(Z, kz.id, '2026-11');
+  assert.deepEqual([r.ok, r.next, r.pays], [true, '2026-12', 1]); assert.equal(pg.faturaKey, kz.id + '|2026-12');
+  assert.deepEqual(comps(), ['2026-10', '2026-12', '2027-01', '2027-02'], 'as parcelas andam um mês');
+  assert.equal(C.faturas(Z).some(f => f.comp === '2026-11'), false);
+  // compra manual com data no ciclo pulado cai na fatura seguinte
+  const m1 = M.newTx({ type: 'cred', date: '2026-10-20', accountId: kz.id, itemId: Z.items[0].id, amount: 10 }); Z.tx.push(m1); assert.equal(C.txComp(Z, m1), '2026-12');
+  // nova compra parcelada projetada a partir de dez: não usa o mês pulado
+  const q1 = M.newTx({ type: 'cred', date: '2026-10-25', accountId: kz.id, itemId: Z.items[0].id, amount: 30, desc: 'OUTRA (1/3)', signed: true }); Object.assign(q1, { comp: '2026-12', parcKey: 'pkq', parcI: 1, parcN: 3 }); Z.tx.push(q1);
+  M.projectParcels(Z, q1, 'pkq', 1, 3, 'OUTRA'); assert.deepEqual(Z.tx.filter(t => t.parcKey === 'pkq').map(t => t.comp).sort(), ['2026-12', '2027-01', '2027-02']);
+  // a parcela real chega: as previstas seguem a real
+  const real2 = Z.tx.find(t => t.parcKey === 'pkz' && t.parcI === 2); delete real2.prev; assert.equal(M.realignParcels(Z, kz.id), 0);
+  // não dá para pular fatura com compra real
+  assert.equal(L.skipFatura(Z, kz.id, '2026-12').ok, false);
+  console.log('fatura que não existiu tests OK');
+}

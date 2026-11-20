@@ -54,7 +54,7 @@ export function cardCycle(card, date) {
 
 export function txComp(S, t) {
   if (t.comp) return t.comp;
-  if (t.type === 'cred') { const c = S.accounts.find(a => a.id === t.accountId); return c ? cardCycle(c, t.date).comp : mOf(t.date); }
+  if (t.type === 'cred') { const c = S.accounts.find(a => a.id === t.accountId); return c ? M.skipComp(S, c.id, cardCycle(c, t.date).comp) : mOf(t.date); }
   return mOf(t.date);
 }
 

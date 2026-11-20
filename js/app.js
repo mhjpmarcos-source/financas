@@ -13,7 +13,7 @@ import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 import * as L from './link.js';
 
-export const VERSION = '0.10.1';
+export const VERSION = '0.10.2';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -759,7 +759,7 @@ function reviewSheet(stRaw, fileName, preset) {
   const rebuild = () => {
     const acc = accById(accountId);
     st = acc && acc.nature === 'credito' && stRaw.kind !== 'fatura' ? P.asFatura(stRaw) : stRaw;
-    if (acc && acc.nature === 'credito' && !comp) comp = C.cardCycle(acc, (st.lines.map(l => l.date).filter(Boolean).sort().pop()) || M.todayISO()).comp;
+    if (acc && acc.nature === 'credito' && !comp) comp = M.skipComp(S(), acc.id, C.cardCycle(acc, (st.lines.map(l => l.date).filter(Boolean).sort().pop()) || M.todayISO()).comp);
     plan = acc ? IP.buildPlan(S(), st, { accountId, comp }) : null;
     if (plan && plan.isCard) { const due = st.due || (comp ? C.faturaOf(S(), accountId, comp).date : null); plan.alreadyPaid = !!(st.kind === 'fatura' && due && due < M.todayISO()); }
     // extrato com saldo anterior: sugere usá-lo como saldo inicial quando a conta ainda não tem data de saldo inicial, ou ela é posterior ao extrato
@@ -2033,6 +2033,8 @@ function faturaSheet(cardId, comp) {
       <div class="actions wrap"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-imp">Importar</button>
         ${f.total > 0 && !paid ? '<button class="btn primary" id="fa-reg">Registrar pagamento</button>' : ''}
         ${f.list.length ? `<button class="btn" id="fa-pay">${f.manual ? 'Desmarcar paga' : paid ? '' : 'Marcar paga sem registrar'}</button>`.replace('<button class="btn" id="fa-pay"></button>', '') : ''}</div>
+      ${M.isSkipped(S(), cardId, comp) ? `<div class="card flat"><p class="hint"><b>O cartão não gerou esta fatura</b> (mudança de vencimento). As compras deste período, as parcelas e os pagamentos ficam na fatura de ${shortM(M.skipComp(S(), cardId, comp))}.</p><button class="btn small" id="fa-unskip">Desfazer: esta fatura existiu</button></div>`
+        : (f.list.length && f.list.every(t => t.prev)) || (!f.list.length && f.payments.length) ? `<p class="hint">Só há parcelas previstas${f.payments.length ? ' e pagamentos' : ''} nesta fatura. Se o cartão mudou o vencimento e pulou este mês, <button class="link" id="fa-skip">avise que esta fatura não existiu</button>: tudo passa para a fatura seguinte.</p>` : ''}
       ${!paid && f.total > 0 ? '<p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" não mexe no saldo: serve para faturas pagas antes de você começar a usar o app. Se o pagamento já está nos lançamentos como despesa (um Pix para o banco do cartão), abra-o e toque em "Vincular a…".</p>' : ''}`;
     panel.onclick = async e => {
       const b = e.target.closest('[data-c]'); if (b) { comp = C.mAdd(comp, +b.dataset.c); return faturaSheet(cardId, comp); }
@@ -2041,6 +2043,14 @@ function faturaSheet(cardId, comp) {
       if (e.target.id === 'fa-new') return txSheet(null, { type: 'cred', accountId: cardId });
       if (e.target.id === 'fa-imp') { closeSheet(); return pickImportFile({ accountId: cardId }); }
       if (e.target.id === 'fa-reg') return payFaturaSheet(null, { cardId, comp });
+      if (e.target.id === 'fa-skip' || e.target.id === 'fa-unskip') {
+        const on = e.target.id === 'fa-skip';
+        if (on && !(await confirmBox(`A fatura de ${shortM(comp)} do ${card.name} não existiu? As parcelas previstas e os pagamentos dela passam para a fatura seguinte, e as próximas parcelas andam um mês.`))) return;
+        let r = null; await sync.commit(s => { r = L.skipFatura(s, cardId, comp, on); });
+        if (!r.ok) return toast(r.error, true);
+        toast(on ? `Pronto: tudo foi para a fatura de ${shortM(r.next)}.` : 'Desfeito.'); render();
+        return faturaSheet(cardId, on ? r.next : comp);
+      }
       if (e.target.id === 'fa-pay') {
         await sync.commit(s => { s.faturaMeta[f.key] = Object.assign({}, s.faturaMeta[f.key], { status: f.manual ? 'pend' : 'liq', upd: Date.now() }); });
         toast(f.manual ? 'Marcação desfeita.' : 'Fatura marcada como paga.');
