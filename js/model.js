@@ -5,7 +5,7 @@
 
 export const APP = 'financas';
 export const FORMAT = 3;
-export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans', 'res', 'rec', 'people'];
+export const COLLS = ['accounts', 'groups', 'items', 'tx', 'loans', 'res', 'rec', 'people', 'jobs', 'slips'];
 const TOMBSTONE_DAYS = 180;
 
 export const uid = p => (p || 'x') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -48,14 +48,20 @@ export function emptyState() {
     app: APP, format: FORMAT, createdAt: new Date().toISOString(), updatedAt: 0,
     profile: { cpf6: '', upd: 0 },
     config: { periodStart: m, setupDone: false, upd: 0 },
-    accounts: [], groups: [], items: [], tx: [], loans: [], res: [], rec: [], people: [],
+    accounts: [], groups: [], items: [], tx: [], loans: [], res: [], rec: [], people: [], jobs: [], slips: [],
     faturaMeta: {}, rules: {}, orc: {}, deleted: {}
   };
 }
 
-/* conta corrente / poupança / carteira (nature 'debito') ou cartão de crédito (nature 'credito') */
+/* conta corrente / poupança / carteira (nature 'debito') ou cartão de crédito (nature 'credito').
+   inv: true = conta de investimento (fica fora do "Saldo hoje"; mandar dinheiro para ela é transferência, não despesa) */
 export function newAccount(f) {
   const credit = f.nature === 'credito';
+  const acc = newAccountBase(f, credit);
+  if (!credit && f.inv) acc.inv = true;
+  return acc;
+}
+function newAccountBase(f, credit) {
   return {
     id: uid('a'), nature: credit ? 'credito' : 'debito', name: String(f.name || '').trim(),
     initial: credit ? 0 : (+f.initial || 0), closeDay: credit ? (+f.closeDay || 0) : 0, dueDay: credit ? (+f.dueDay || 0) : 0,
@@ -79,6 +85,13 @@ export function newTx(f) {
 }
 
 export function touch(rec) { rec.upd = Date.now(); return rec; }
+
+/* investimento: informa o valor de hoje e a diferença para o saldo calculado vira rendimento (ou perda).
+   adj: true = ajuste de valor; muda o saldo da conta de investimento, mas não entra em receitas/despesas do mês. */
+export function newYield(f) {
+  const t = newTx({ type: f.diff >= 0 ? 'rec' : 'deb', date: f.date, accountId: f.accountId, itemId: f.itemId || '', amount: Math.abs(f.diff), desc: f.diff >= 0 ? 'Rendimento' : 'Perda de valor', status: 'liq' });
+  t.adj = true; return t;
+}
 
 export function removeRecord(state, coll, id) {
   state[coll] = state[coll].filter(r => r.id !== id);
@@ -164,6 +177,7 @@ export function merge(a, b) {
     const order = [...a[k].map(r => r.id), ...b[k].map(r => r.id).filter(id => !a[k].some(r => r.id === id))];
     out[k] = order.map(id => map.get(id)).filter(r => !(del[r.id] && del[r.id] >= (r.upd || 0)));
   });
+  Object.keys(b).forEach(k => { if (!(k in out) && Array.isArray(b[k])) out[k] = b[k]; }); // coleção de uma versão mais nova do app: mantém
   ['profile', 'config'].forEach(k => { out[k] = (b[k].upd || 0) > (a[k].upd || 0) ? b[k] : a[k]; });
   ['faturaMeta', 'rules', 'orc'].forEach(k => {
     out[k] = Object.assign({}, a[k]);

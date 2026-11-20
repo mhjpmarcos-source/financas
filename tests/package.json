@@ -3,6 +3,6 @@
   "private": true,
   "description": "Testes automatizados. Uso: npm install && python3 fixtures/gerar.py && npm test",
   "type": "module",
-  "scripts": { "test": "node model.test.mjs && node import.test.mjs" },
+  "scripts": { "test": "node model.test.mjs && node import.test.mjs && node holerite.test.mjs" },
   "devDependencies": { "pdfjs-dist": "4.10.38" }
 }

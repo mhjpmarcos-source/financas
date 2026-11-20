@@ -5,6 +5,8 @@ import { makeClassifier, merchantKey } from './classify.js';
 import * as M from '../model.js';
 import * as C from '../calc.js';
 
+/* aplicação ou resgate no extrato: com conta de investimento cadastrada, vira transferência (não é despesa nem receita) */
+const INVEST = /APLICAC|RESGATE|\bCDB\b|\bLCI\b|\bLCA\b|\bRDB\b|TESOURO|FUNDO DE INVEST|POUPANCA|INVEST|CORRETORA/;
 const days = (a, b) => Math.abs(Math.round((Date.parse(a + 'T12:00') - Date.parse(b + 'T12:00')) / 864e5));
 const hash = M.hashStr;
 
@@ -17,6 +19,7 @@ export function buildPlan(S, st, { accountId, comp }) {
   const seen = {};
   const existingKeys = new Set(S.tx.filter(t => t.impKey).map(t => t.impKey));
   const byId = new Map(S.tx.map(t => [t.id, t])), usedParc = {};
+  const invAccs = S.accounts.filter(a => a.nature === 'debito' && a.inv && a.active !== false && a.id !== accountId);
   let projN = 0;
   const rows = st.lines.map((l, idx) => {
     const row = { idx, line: l, include: false, status: '', itemId: '', how: '', match: null, tx: null };
@@ -52,6 +55,14 @@ export function buildPlan(S, st, { accountId, comp }) {
       row.include = true;
       row.tx.cardPay = true; row.tx.faturaKey = row.fatura ? row.fatura.key : '';
       row.tx.desc = 'Pagamento de fatura · ' + (l.detail || l.desc).replace(/^Pagto cart[aã]o cr[eé]dito\s*·?\s*/i, '');
+      return row;
+    }
+    if (!isCard && invAccs.length && INVEST.test(norm([l.desc, l.title, l.detail].filter(Boolean).join(' ')))) {
+      const words = norm(l.desc + ' ' + (l.detail || '')).split(/[^A-Z0-9]+/).filter(w => w.length > 3);
+      const best = invAccs.find(a => words.some(w => norm(a.name).includes(w))) || invAccs[0];
+      setRowInv({ accountId }, row, best.id); row.invOptions = invAccs.map(a => a.id);
+      const dupT = findManual(S, row.tx, used, false);
+      if (dupT) { used.add(dupT.id); row.status = 'dup'; row.match = dupT; row.reason = 'Parece já lançado'; row.include = false; }
       return row;
     }
     const c = classify({ ...l, kindHint: isCard && l.dir === 'in' ? 'estorno' : '' });
@@ -155,6 +166,7 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
     const t = M.newTx({ ...r.tx, itemId: r.itemId, status: r.tx.type === 'cred' ? 'pend' : 'liq', origin: 'import', signed: true });
     ['impKey', 'rawDesc', 'doc', 'cardRef', 'cardPay', 'faturaKey'].forEach(k => { if (r.tx[k]) t[k] = r.tx[k]; });
     if (t.cardPay) t.itemId = '';
+    if (t.type === 'trf') t.amount = Math.abs(t.amount);
     if (r.parcKey) { const id = M.parcId(r.parcKey, r.parcI); if (!S.tx.some(y => y.id === id)) t.id = id; Object.assign(t, { parcKey: r.parcKey, parcI: r.parcI, parcN: r.parcN }); }
     S.tx.push(t); created++;
     if (plan.project && r.parcKey) M.projectParcels(S, t, r.parcKey, r.parcI, r.parcN, r.cleanDesc);
@@ -174,6 +186,14 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
     if (a) { a.initial = plan.setInitial.value; a.initialDate = plan.setInitial.date; M.touch(a); }
   }
   return { created, learned, paid };
+}
+
+/* linha de aplicação/resgate: transferência entre a conta do extrato e a conta de investimento escolhida;
+   invId vazio = não é investimento (volta a ser despesa ou receita comum, sem categoria) */
+export function setRowInv(plan, row, invId) {
+  const l = row.line, acc = plan.accountId;
+  if (invId) { row.status = 'inv'; row.include = true; row.invId = invId; row.itemId = ''; Object.assign(row.tx, { type: 'trf', accountId: l.dir === 'in' ? invId : acc, toAccountId: l.dir === 'in' ? acc : invId }); }
+  else { row.status = 'new'; row.include = true; row.invId = ''; Object.assign(row.tx, { type: l.dir === 'in' ? 'rec' : 'deb', accountId: acc }); delete row.tx.toAccountId; }
 }
 
 /* vincula um pagamento (linha da revisão) a outra fatura ou a nenhuma */

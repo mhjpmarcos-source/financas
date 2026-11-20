@@ -10,8 +10,9 @@ import * as PT from './imp/pdftext.js';
 import * as P from './imp/parse.js';
 import * as IP from './imp/plan.js';
 import * as PP from './imp/parcelas.js';
+import * as H from './imp/holerite.js';
 
-export const VERSION = '0.8.2';
+export const VERSION = '0.9.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -361,6 +362,7 @@ function txRow(t, showDate) {
   const sub = [showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) : '', t.type === 'trf' ? `${acc ? acc.name : '?'} → ${(accById(t.toAccountId) || {}).name || '?'}` : (it && t.desc ? it.name : ''), t.type !== 'trf' && acc ? acc.name : ''].filter(Boolean).join(' · ');
   const rk = t.recId && (S().rec || []).find(r => r.id === t.recId);
   const tags = (t.seriesId ? `<span class="tag info">${t.seriesIdx}/${t.seriesN}</span>` : '') + (t.parcKey ? `<span class="tag info">${t.parcI}/${t.parcN}</span>` : '') + (rk ? `<span class="tag info">${rk.kind === 'var' ? 'variável' : 'fixa'}</span>` : '')
+    + (t.folha ? '<span class="tag info">em folha</span>' : '') + (t.adj ? '<span class="tag info">ajuste de valor</span>' : '')
     + (t.prev ? '<span class="tag">previsto</span>' : t.status === 'pend' && t.type !== 'cred' ? '<span class="tag">pendente</span>' : '');
   return `<li data-tx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
     <span class="t"><b>${esc(title)}</b><small>${esc(sub)}${tags}</small></span>
@@ -386,7 +388,7 @@ function askChoice(title, msg, options) {
 /* ----- lançamentos ----- */
 function pageLanc() {
   const st = S(), m = ui.month, q = ui.q || '';
-  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"><button class="btn" id="imp" title="Importar fatura ou extrato (PDF, CSV, OFX)">Importar</button></div>`;
+  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar em todos os meses" value="${esc(q)}" autocomplete="off"><button class="btn" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)">Importar</button></div>`;
   if (q.trim()) {
     const res = C.search(st, q);
     html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
@@ -398,7 +400,7 @@ function pageLanc() {
     html += monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
-      <p class="hint">Compras no cartão aparecem no mês da fatura.</p>`;
+      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} descontados em folha (não passam pela conta).` : ''}</p>`;
     if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
     else {
       let day = '';
@@ -450,7 +452,10 @@ function txSheet(tx, preset) {
     const defDate = tx ? tx.date : (ui.month === M.todayISO().slice(0, 7) ? M.todayISO() : ui.month + '-01');
     const accSel = tx && tx.type === type ? tx.accountId : (preset && preset.accountId) || '';
     const loanInfo = tx && tx.loanId ? (() => { const l = st.loans.find(x => x.id === tx.loanId); return l ? `<p class="hint">Parte da dívida ${l.dir === 'in' ? 'de' : 'com'} <b>${esc(l.person)}</b>.</p>` : ''; })() : '';
-    const origin = tx && tx.origin === 'import' ? `<p class="hint">Importado${tx.rawDesc ? ': ' + esc(tx.rawDesc) : ''}${tx.cardRef ? ' · cartão final ' + esc(tx.cardRef) : ''}.</p>` : '';
+    const origin = (tx && tx.folha ? '<p class="hint"><b>Desconto em folha:</b> conta como despesa na categoria, mas não sai da conta, porque o salário já foi lançado pelo líquido. É atualizado quando o contracheque é importado de novo.</p>'
+      : tx && tx.adj ? '<p class="hint"><b>Ajuste de valor do investimento:</b> muda o saldo da conta de investimento, sem entrar nas receitas e despesas do mês.</p>'
+      : tx && tx.slipId ? '<p class="hint">Líquido do contracheque (Agenda › Fixas e parcelas › Renda do emprego).</p>' : '')
+      + (tx && tx.origin === 'import' && !tx.slipId ? `<p class="hint">Importado${tx.rawDesc ? ': ' + esc(tx.rawDesc) : ''}${tx.cardRef ? ' · cartão final ' + esc(tx.cardRef) : ''}.</p>` : '');
     const rule = tx && tx.recId && (st.rec || []).find(r => r.id === tx.recId);
     const series = tx && tx.seriesId ? `<p class="hint">${tx.seriesKind === 'parc' ? 'Parcela' : 'Repetição'} ${tx.seriesIdx} de ${tx.seriesN}.</p>`
       : tx && tx.parcKey ? `<p class="hint">Parcela ${tx.parcI} de ${tx.parcN}${tx.prev ? ' prevista: será trocada pela real quando a fatura for importada' : ''}.</p>`
@@ -615,7 +620,7 @@ async function readStatement(file) {
     const doc = await PT.openPdf(lib, bytes, { tryPasswords: tries, ask: askPassword });
     const pages = await PT.pdfLines(doc);
     if (!pages.some(p => p.length)) throw new Error('Este PDF não tem texto (parece ser uma imagem digitalizada). Baixe a fatura ou o extrato direto do site ou app do banco.');
-    return P.parsePdfPages(pages);
+    return H.parseHolerite(pages) || P.parsePdfPages(pages); // contracheque tem leitor próprio
   }
   if (name.endsWith('.ofx') || /<OFX>/i.test(new TextDecoder('latin1').decode(bytes.slice(0, 600)))) return P.parseOfx(bytes);
   return P.parseCsv(bytes);
@@ -623,8 +628,8 @@ async function readStatement(file) {
 
 function pickImportFile(preset) {
   const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = '.pdf,.csv,.ofx,.txt,application/pdf,text/csv';
-  inp.onchange = () => { if (inp.files[0]) importFlow(inp.files[0], preset); };
+  inp.type = 'file'; inp.accept = '.pdf,.csv,.ofx,.txt,application/pdf,text/csv'; inp.multiple = true; // vários só para contracheques
+  inp.onchange = () => { if (inp.files.length > 1) importMany([...inp.files]); else if (inp.files[0]) importFlow(inp.files[0], preset); };
   inp.click();
 }
 
@@ -637,9 +642,24 @@ async function importFlow(file, preset = {}) {
     }
     const st = await readStatement(file);
     ov.close();
+    if (st.kind === 'holerite') return slipSheet([st], file.name);
     if (!st.lines.length) return toast('Não encontrei lançamentos neste arquivo. Se for de outro banco, me envie um exemplo para eu ensinar o app a ler.', true);
     reviewSheet(st, file.name, preset);
   } catch (e) { ov.close(); toast(e.message || 'Não foi possível ler o arquivo.', true); }
+}
+
+/* vários arquivos de uma vez: só contracheques (para montar o histórico e a previsão de uma vez) */
+async function importMany(files) {
+  const ov = busyOverlay('Lendo ' + files.length + ' arquivos…');
+  const list = [], bad = [];
+  for (const [i, f] of files.entries()) {
+    ov.set(`Lendo ${i + 1} de ${files.length}…`);
+    try { const st = await readStatement(f); if (st && st.kind === 'holerite') list.push(st); else bad.push(f.name); } catch { bad.push(f.name); }
+  }
+  ov.close();
+  if (!list.length) return toast('Escolher vários arquivos de uma vez só funciona para contracheques. Faturas e extratos: um por vez.', true);
+  if (bad.length) toast(`${bad.length} arquivo(s) não são contracheques e ficaram de fora: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? '…' : ''}`, true);
+  slipSheet(list, list.length + ' contracheques');
 }
 
 function guessTarget(st, preset) {
@@ -673,24 +693,27 @@ function reviewSheet(stRaw, fileName, preset) {
     panel.classList.add('wide');
     const draw = () => {
       const acc = accById(accountId), isCard = acc && acc.nature === 'credito';
-      const count = k => plan ? plan.rows.filter(r => r.status === k || (k === 'ignored' && r.status === 'cardpay') || (k === 'new' && r.status === 'prev')).length : 0;
+      const count = k => plan ? plan.rows.filter(r => r.status === k || (k === 'ignored' && r.status === 'cardpay') || (k === 'new' && (r.status === 'prev' || r.status === 'inv'))).length : 0;
       const sel = plan ? plan.rows.filter(r => r.include && r.status !== 'cardpay') : [];
-      const noCat = sel.filter(r => !r.itemId).length;
+      const noCat = sel.filter(r => !r.itemId && r.tx.type !== 'trf').length;
       const total = sel.reduce((s, r) => s + r.tx.amount, 0);
-      const inSum = sel.filter(r => r.tx.type === 'rec').reduce((s, r) => s + r.tx.amount, 0), outSum = sel.filter(r => r.tx.type !== 'rec').reduce((s, r) => s + r.tx.amount, 0);
+      const inSum = sel.filter(r => r.line.dir === 'in').reduce((s, r) => s + r.tx.amount, 0), outSum = sel.filter(r => r.line.dir !== 'in').reduce((s, r) => s + r.tx.amount, 0);
       const goLabel = isCard ? `Importar ${sel.length} · ${C.brl(total)}` : `Importar ${sel.length}`;
       const opts = ['credito', 'debito'].map(n => {
         const l = S().accounts.filter(a => a.nature === n && a.active !== false);
         return l.length ? `<optgroup label="${n === 'credito' ? 'Cartões' : 'Contas'}">${l.map(a => `<option value="${a.id}" ${a.id === accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : '';
       }).join('');
       const chk = st.check || {};
-      const rowsHTML = !plan ? '' : plan.rows.filter(r => filter === 'all' || r.status === filter || (filter === 'new' && r.status === 'prev') || (filter === 'ignored' && (r.status === 'cardpay' || r.status === 'already'))).map(r => {
+      const rowsHTML = !plan ? '' : plan.rows.filter(r => filter === 'all' || r.status === filter || (filter === 'new' && (r.status === 'prev' || r.status === 'inv')) || (filter === 'ignored' && (r.status === 'cardpay' || r.status === 'already'))).map(r => {
         const l = r.line, sign = r.tx && r.tx.amount < 0 ? '−' : '';
         const amt = `<span class="num ${l.dir === 'in' && !isCard ? 'pos' : ''}">${l.dir === 'in' ? (isCard ? '−' : '+') : ''}${C.brl(l.amount)}</span>`;
         const head = `<div class="irow-h"><label class="check"><input type="checkbox" data-inc="${r.idx}" ${r.include ? 'checked' : ''} ${['ignored', 'already'].includes(r.status) || (r.status === 'cardpay' && !r.fatura) ? 'disabled' : ''}></label>
           <span class="t"><b>${esc(r.tx ? r.tx.desc : l.desc)}</b><small>${l.date ? C.fmtD(l.date) + '/' + l.date.slice(2, 4) : ''}${l.cardRef ? ' · final ' + esc(l.cardRef) : ''}${sign ? ' · estorno/crédito' : ''}</small></span>${amt}</div>`;
         let body = '';
-        if (r.status === 'new') body = `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>${r.how && r.how !== 'escolhida' ? `<small class="hint">sugerida por ${r.how}</small>` : ''}`;
+        if (r.status === 'inv' || (r.status === 'new' && r.invOptions)) body = `<p class="hint">${r.status === 'inv' ? (l.dir === 'in' ? 'Resgate' : 'Aplicação') + ': transferência entre a conta e o investimento, sem contar como ' + (l.dir === 'in' ? 'receita' : 'despesa') + '.' : 'Lançado como ' + (l.dir === 'in' ? 'receita' : 'despesa') + ' comum.'}</p>
+          <select data-inv="${r.idx}">${r.invOptions.map(id => `<option value="${id}" ${id === r.invId ? 'selected' : ''}>${esc((accById(id) || {}).name || '')}</option>`).join('')}<option value="" ${r.status === 'inv' ? '' : 'selected'}>Não é investimento</option></select>`
+          + (r.status === 'new' ? `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>` : '');
+        else if (r.status === 'new') body = `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>${r.how && r.how !== 'escolhida' ? `<small class="hint">sugerida por ${r.how}</small>` : ''}`;
         if (r.status === 'prev') body = `<p class="hint">✓ ${esc(r.reason)}: <b>${esc(r.match.desc)}</b>, previsto ${C.brl(Math.abs(r.match.amount))}. O lançamento previsto passa a ter o valor real, sem duplicar.</p>`;
         if (r.status === 'dup') body = `<p class="hint">Parece igual a <b>${esc(r.match.desc || (itemById(r.match.itemId) || {}).name || '')}</b> de ${C.fmtD(r.match.date)} (${C.brl(r.match.amount)}), já lançado. Marque para importar mesmo assim.</p>`;
         if (r.status === 'ignored' || r.status === 'already') body = `<p class="hint">${esc(r.reason || '')}</p>`;
@@ -723,6 +746,7 @@ function reviewSheet(stRaw, fileName, preset) {
       if (e.target.id === 'r-comp') { comp = e.target.value; rebuild(); return draw(); }
       if (e.target.dataset.inc) { const r = plan.rows[+e.target.dataset.inc]; r.include = e.target.checked; return draw(); }
       if (e.target.dataset.fat) { IP.setRowFatura(plan.rows[+e.target.dataset.fat], e.target.value); return draw(); }
+      if (e.target.dataset.inv) { IP.setRowInv(plan, plan.rows[+e.target.dataset.inv], e.target.value); return draw(); }
       if (e.target.id === 'r-paid') { plan.alreadyPaid = e.target.checked; return; }
       if (e.target.id === 'r-proj') { plan.project = e.target.checked; return draw(); }
       if (e.target.id === 'r-ini') { plan.setInitial = e.target.checked ? { value: st.saldoIni, date: st.saldoIniDate } : null; return draw(); }
@@ -747,6 +771,157 @@ function reviewSheet(stRaw, fileName, preset) {
         const proj = S().tx.filter(t => t.prev && t.parcKey).length - prev0;
         toast(`${res.created} lançamento(s) importado(s)${proj > 0 ? ` · ${proj} parcela(s) futura(s) prevista(s)` : ''}${res.paid ? ` · ${res.paid} fatura(s) marcada(s) como paga(s)` : ''}.`);
       }
+    };
+  });
+}
+
+/* ----- contracheque: revisão antes de aplicar (um ou vários do mesmo empregador) ----- */
+const KIND_LBL = { fix: 'Todo mês', ev: 'Eventual', tax: 'Imposto' };
+function slipSheet(list, title) {
+  const plan = H.buildSlipPlan(S(), list);
+  const open = { slips: plan.slips.length <= 4, fix: true, ev: false, tax: false };
+  openSheet('', panel => {
+    panel.classList.add('wide');
+    const draw = () => {
+      const st = S(), top = panel.scrollTop;
+      panel.querySelectorAll('details[data-g]').forEach(d => { open[d.dataset.g] = d.open; });
+      const P = H.planPiso(st, plan), D = H.planDiff(st, plan), n = plan.slips.length;
+      const bad = plan.slips.filter(s => !s.h.ok).length, old = plan.slips.filter(s => s.already).length;
+      const months = plan.slips.map(s => H.slipMonth(s.h)).sort();
+      const accOpts = sel => `<option value="">Não lançar: guardar só o histórico</option>` + st.accounts.filter(a => a.nature === 'debito' && a.active !== false && !a.inv).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+      const slipRow = (s, i) => { const h = s.h, acc = plan.banks[s.banco];
+        return `<li class="irow"><div class="irow-h"><label class="check"><input type="checkbox" data-post="${i}" ${s.post && acc ? 'checked' : ''} ${acc ? '' : 'disabled'} aria-label="Lançar este contracheque"></label>
+          <span class="t"><b>${esc(H.tipoLabel(h.tipo))} · ${shortM(H.slipMonth(h))}</b><small>bruto ${C.brl(h.bruto)} · descontos ${C.brl(h.desc)}${s.already ? '<span class="tag info">já importado</span>' : ''}${h.ok ? '' : '<span class="tag">não confere</span>'}</small></span>
+          <span class="num pos">${C.brl(h.liq)}</span></div>
+          <div class="rgrid"><label>Crédito em <input type="date" data-cred="${i}" value="${esc(s.credito)}"></label></div></li>`; };
+      const rubRow = r => `<li class="irow"><div class="irow-h"><span class="t"><b>${esc(r.desc)}</b><small>${n > 1 ? `em ${r.n} de ${n} · ` : ''}${r.how === 'escolha anterior' ? 'como você escolheu antes' : 'sugerido pelo ' + (r.how === 'nome' ? 'nome' : 'histórico')}</small></span><span class="num ${r.col === 'V' ? 'pos' : ''}">${r.col === 'D' ? '−' : ''}${C.brl(r.last)}</span></div>
+        <div class="rgrid"><select data-kind="${esc(r.key)}" aria-label="Tipo da rubrica">${(r.col === 'D' ? ['fix', 'ev', 'tax'] : ['fix', 'ev']).map(k => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${KIND_LBL[k]}</option>`).join('')}</select>
+        ${r.col === 'D' && r.kind === 'fix' ? `<select data-exp="${esc(r.key)}" aria-label="Contar como despesa"><option value="">Não contar como despesa</option>${optItems('despesa', r.exp)}</select>` : ''}</div>
+        ${r.loan && r.pm ? `<div class="rgrid parc"><label>Parcela <input data-pi="${esc(r.key)}" inputmode="numeric" value="${r.pi || ''}" placeholder="?"></label><label>de <input data-pn="${esc(r.key)}" inputmode="numeric" value="${r.pn || ''}" placeholder="?"></label><small class="hint">em ${shortM(r.pm)}${r.pedit ? ' · corrigida por você' : ''}</small></div>` : ''}</li>`;
+      const group = (k, title, hint, rows) => rows.length ? `<details class="rgroup" data-g="${k}" ${open[k] ? 'open' : ''}><summary>${title} <span class="hint">(${rows.length})</span></summary><p class="hint">${hint}</p><ul class="list irows wrap">${rows.map(rubRow).join('')}</ul></details>` : '';
+      const V = plan.rubs.filter(r => r.col === 'V'), Dd = plan.rubs.filter(r => r.col === 'D');
+      const chg = D && D.prev ? D.changes.map(c => `<li><span class="grow">${esc(c.desc)}</span><span class="num">${c.what === 'novo' ? 'novo: ' + C.brl(c.v) : c.what === 'saiu' ? 'saiu (era ' + C.brl(c.v) + ')' : `${C.brl(c.from)} → ${C.brl(c.v)}`}</span></li>`).join('') : '';
+      const evs = D ? D.eventuais.map(e => `<li><span class="grow">${esc(e.desc)}</span><span class="num ${e.col === 'V' ? 'pos' : ''}">${e.col === 'D' ? '−' : '+'}${C.brl(e.v)}</span></li>`).join('') : '';
+      const noAcc = Object.values(plan.banks).every(v => !v);
+      const lastN = plan.slips.filter(s => s.h.tipo === 'normal').pop();
+      panel.innerHTML = `<h2>Importar contracheque${n > 1 ? 's' : ''}</h2>
+        <p class="hint">${esc(plan.empregador)} · ${n > 1 ? `${n} contracheques, de ${shortM(months[0])} a ${shortM(months[n - 1])}` : esc(title)}</p>
+        <p class="${bad ? 'warn' : 'okbox'}">${bad ? `⚠ ${bad === n && n === 1 ? esc(plan.slips[0].h.check.msg) : bad + ' contracheque(s) com soma diferente dos totais impressos: confira antes de aplicar.'}` : `✓ ${n > 1 ? 'Todos conferem: em cada um, as rubricas somam o bruto e os descontos impressos.' : esc(plan.slips[0].h.check.msg)}`}</p>
+        ${plan.other ? `<p class="warn">${plan.other} arquivo(s) são de outro empregador e ficaram de fora. Importe-os separadamente.</p>` : ''}
+        ${Object.keys(plan.banks).map(b => `<label>Conta onde o líquido cai${b ? ' (' + esc(b) + ')' : ''}</label><select data-bank="${esc(b)}">${accOpts(plan.banks[b])}</select>`).join('')}
+        ${noAcc ? '<p class="hint">Sem conta escolhida, os contracheques ficam guardados só como histórico (servem para a previsão), sem lançamentos.</p>' : ''}
+        <details class="rgroup" data-g="slips" ${open.slips ? 'open' : ''}><summary>${n > 1 ? 'Contracheques' : 'Contracheque'} <span class="hint">(${n}${old ? `, ${old} já importado${old > 1 ? 's' : ''}` : ''})</span></summary>
+          <p class="hint">A receita entra pelo <b>líquido</b>, na data de crédito (é o que aparece no extrato do banco).</p><ul class="list irows wrap">${plan.slips.map(slipRow).join('')}</ul></details>
+        ${chg ? `<div class="card flat"><h2>O que mudou no fixo desde ${shortM(H.slipMonth(D.prev))}</h2><ul class="sublist calc">${chg}</ul></div>` : D && D.prev && lastN ? `<p class="hint">Nada mudou no fixo desde ${shortM(H.slipMonth(D.prev))}.</p>` : ''}
+        ${evs && lastN ? `<div class="card flat"><h2>Eventuais de ${shortM(H.slipMonth(lastN.h))}</h2><ul class="sublist calc">${evs}</ul></div>` : ''}
+        <h3 class="sub">Rubricas: confira o que é fixo e o que é eventual</h3>
+        ${group('fix', 'Todo mês', 'Entram no piso previsto. Nos descontos, escolha a categoria dos que são gastos seus (empréstimo consignado, plano de saúde, sindicato): eles aparecem como despesa "em folha", sem mexer no saldo, porque o líquido já veio sem eles.', [...V, ...Dd].filter(r => r.kind === 'fix'))}
+        ${group('ev', 'Eventuais', 'Férias, 13º, horas extras, diferenças e estornos: não entram no piso previsto.', [...V, ...Dd].filter(r => r.kind === 'ev'))}
+        ${group('tax', 'Impostos', 'INSS e imposto de renda. Para o piso, valem os de um mês sem eventuais.', Dd.filter(r => r.kind === 'tax'))}
+        ${P ? `<div class="card flat"><h2>Piso previsto: <span class="num pos">${C.brl(P.piso)}</span> por mês</h2>
+          <p class="hint">Proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}${P.exact ? '' : ' (ainda sem um mês sem eventuais: os impostos podem estar altos)'}. Eventuais ficam de fora e aparecem quando o contracheque chegar.</p>
+          <label class="check"><input type="checkbox" id="sl-fc" ${plan.forecast ? 'checked' : ''} ${noAcc ? 'disabled' : ''}> Prever esse valor como receita dos próximos meses (some ou muda quando eu importar o próximo contracheque)</label></div>` : ''}
+        <div class="actions sticky"><button class="btn" id="sl-cancel">Cancelar</button><button class="btn primary" id="sl-go">${noAcc ? 'Guardar histórico' : 'Aplicar'}</button></div>`;
+      panel.scrollTop = top;
+    };
+    draw();
+    const rub = key => plan.rubs.find(r => r.key === key);
+    panel.onchange = e => {
+      const d = e.target.dataset;
+      if (d.kind) { rub(d.kind).kind = e.target.value; rub(d.kind).how = 'escolha'; return draw(); }
+      if (d.exp) { rub(d.exp).exp = e.target.value; return; }
+      if (d.pi || d.pn) { const r = rub(d.pi || d.pn); const v = Math.max(0, parseInt(e.target.value, 10) || 0); if (d.pi) r.pi = v; else r.pn = v; r.pedit = true; return draw(); }
+      if (d.post) { plan.slips[+d.post].post = e.target.checked; return; }
+      if (d.cred) { if (e.target.value) plan.slips[+d.cred].credito = e.target.value; return; }
+      if ('bank' in d) { plan.banks[d.bank] = e.target.value; plan.slips.forEach(s => { if (s.banco === d.bank && e.target.value) s.post = true; }); return draw(); }
+      if (e.target.id === 'sl-fc') plan.forecast = e.target.checked;
+    };
+    panel.onclick = async e => {
+      if (e.target.id === 'sl-cancel') return closeSheet();
+      if (e.target.id !== 'sl-go') return;
+      const badLoan = plan.rubs.find(r => r.pedit && r.pn && r.pi > r.pn);
+      if (badLoan) return toast(`${badLoan.desc}: a parcela não pode ser maior que o total.`, true);
+      let res = null;
+      await sync.commit(s => { res = H.applySlipPlan(s, plan); });
+      const posted = plan.slips.filter(s => s.post && plan.banks[s.banco]).pop();
+      closeSheet();
+      if (posted) { ui.tab = 'lanc'; ui.q = ''; ui.month = posted.credito.slice(0, 7); }
+      render();
+      toast(`${res.slips} contracheque(s) guardado(s)${res.created + res.updated ? ` · ${res.created + res.updated} receita(s)` : ''}${res.folha ? ` · ${res.folha} desconto(s) em folha` : ''}${res.piso && plan.forecast && posted ? ` · piso previsto ${C.brl(res.piso.piso)}` : ''}.`);
+    };
+  });
+}
+
+/* ----- renda do emprego: fonte de renda, consignados em folha e contracheques guardados ----- */
+function jobsHTML(st) {
+  const jobs = st.jobs || [];
+  if (!jobs.length) return `<div class="card"><h2>Renda do emprego</h2><p class="hint">Importe o contracheque em PDF (um ou vários de uma vez): o app lança o líquido, separa o que é fixo do que é eventual, mostra os consignados descontados em folha e prevê os próximos meses pelo piso fixo.</p><button class="link" id="job-imp">Importar contracheque</button></div>`;
+  return `<div class="card"><h2>Renda do emprego</h2><ul class="list wrap">${jobs.map(j => {
+    const sl = H.slipsOf(st, j.id), P = H.pisoOf(sl.filter(x => x.tipo === 'normal')), last = sl[sl.length - 1], lo = H.loansOf(st, j.id);
+    return `<li data-job="${j.id}"><span class="dot" style="background:#2e9e6b">R</span><span class="t"><b>${esc(j.name)}</b><small>${sl.length} contracheque${sl.length === 1 ? '' : 's'}${last ? ' · último ' + shortM(H.slipMonth(last)) : ''}${lo.length ? ` · ${lo.length} consignado${lo.length > 1 ? 's' : ''} em folha` : ''}</small></span><span class="num pos">${P ? C.brl(P.piso) : ''}</span></li>`;
+  }).join('')}</ul><p class="hint">O valor é o piso fixo previsto por mês (sem eventuais).</p><button class="link" id="job-imp">+ Importar contracheque</button></div>`;
+}
+const loanLine = l => l.i ? `parcela ${l.i}${l.n ? ` de ${l.n} · faltam ${l.left} · termina em ${shortM(l.end)}` : ' · total de parcelas não informado'}${l.manual ? ' · corrigida por você' : ''}` : 'parcela não informada';
+function jobSheet(id) {
+  const st = S(), job = (st.jobs || []).find(j => j.id === id); if (!job) return;
+  const sl = H.slipsOf(st, id), P = H.pisoOf(sl.filter(x => x.tipo === 'normal')), loans = H.loansOf(st, id);
+  const rest = loans.reduce((s, l) => s + (l.rest || 0), 0), month = loans.reduce((s, l) => s + l.v, 0);
+  openSheet(`<h2>${esc(job.name)}</h2>
+    ${P ? `<div class="kpis two"><div class="kpi"><small>Piso previsto por mês</small><b class="num pos">${C.brl(P.piso)}</b></div><div class="kpi"><small>Descontado em folha (despesas suas)</small><b class="num neg">${C.brl(P.folha)}</b></div></div>
+      <p class="hint">Piso = proventos fixos ${C.brl(P.fixV)} − descontos fixos ${C.brl(P.fixD)} − impostos ${C.brl(P.tax)}. É o líquido esperado num mês sem eventuais; a cada contracheque ele é recalculado.</p>` : '<p class="hint">Ainda sem contracheque mensal.</p>'}
+    <h3 class="sub">Consignados descontados em folha</h3>
+    ${loans.length ? `<p class="hint">${C.brl(month)} por mês${rest ? ` · faltam ${C.brl(rest)} nos que informam o total` : ''}. Não saem da conta: o líquido já vem sem eles. Toque para corrigir o número da parcela.</p>
+      <ul class="list wrap">${loans.map(l => `<li data-lp="${esc(l.key)}"><span class="t"><b>${esc(l.desc)}</b><small>${loanLine(l)}</small></span><span class="num">${C.brl(l.v)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhum empréstimo no último contracheque.</p>'}
+    <h3 class="sub">Contracheques</h3>
+    <ul class="list wrap">${sl.slice().reverse().map(x => `<li data-slip="${x.id}"><span class="t"><b>${esc(H.tipoLabel(x.tipo))} · ${shortM(H.slipMonth(x))}</b><small>crédito ${C.fmtD(x.credito)}/${x.credito.slice(2, 4)} · bruto ${C.brl(x.bruto)}${x.txId ? '' : ' · só histórico'}</small></span><span class="num pos">${C.brl(x.liq)}</span></li>`).join('') || '<li class="empty">Nenhum.</li>'}</ul>
+    <div class="actions wrap"><button class="btn danger" id="jb-del">Excluir fonte de renda</button><button class="btn" id="jb-close">Fechar</button><button class="btn primary" id="jb-imp">Importar contracheque</button></div>`, panel => {
+    panel.classList.add('wide');
+    panel.onclick = async e => {
+      if (e.target.id === 'jb-close') return closeSheet();
+      if (e.target.id === 'jb-imp') { closeSheet(); return pickImportFile({}); }
+      if (e.target.id === 'jb-del') {
+        if (!(await confirmBox(`Excluir ${job.name}, os ${sl.length} contracheques guardados, os lançamentos que eles criaram e a previsão do piso?`))) return;
+        await sync.commit(s => H.removeJob(s, id)); closeSheet(); return toast('Fonte de renda excluída.');
+      }
+      const lp = e.target.closest('[data-lp]'); if (lp) return loanParcForm(id, loans.find(l => l.key === lp.dataset.lp));
+      const s1 = e.target.closest('[data-slip]'); if (s1) return slipDetail(s1.dataset.slip);
+    };
+  });
+}
+/* correção manual do número da parcela e do total de um consignado */
+function loanParcForm(jobId, l) {
+  if (!l) return;
+  openSheet(`<h2>${esc(l.desc)}</h2>
+    <p class="hint">${C.brl(l.v)} por mês, descontado em folha. O contracheque de ${shortM(l.asOf)} ${l.i ? 'indica ' + loanLine({ ...l, manual: false }) : 'não informa a parcela'}. Corrija aqui se o número estiver errado: os meses seguintes continuam a contagem a partir dele.</p>
+    <div class="grid2"><div><label for="lp-i">Parcela em ${shortM(l.asOf)}</label><input id="lp-i" inputmode="numeric" value="${l.i || ''}"></div>
+    <div><label for="lp-n">Total de parcelas</label><input id="lp-n" inputmode="numeric" value="${l.n || ''}" placeholder="Não informado"></div></div>
+    <p class="hint" id="lp-prev"></p>
+    <div class="actions wrap">${l.manual ? '<button class="btn" id="lp-reset">Voltar ao que o contracheque informa</button>' : ''}<button class="btn" id="lp-cancel">Cancelar</button><button class="btn primary" id="lp-save">Salvar</button></div>`, panel => {
+    const val = () => ({ i: parseInt(panel.querySelector('#lp-i').value, 10) || 0, n: parseInt(panel.querySelector('#lp-n').value, 10) || 0 });
+    const prev = () => { const { i, n } = val(); panel.querySelector('#lp-prev').textContent = i && n && n >= i ? `Faltam ${n - i} parcela(s): termina em ${shortM(C.mAdd(l.asOf, n - i))} · ${C.brl((n - i) * l.v)} a pagar.` : i && n ? 'A parcela não pode ser maior que o total.' : ''; };
+    panel.oninput = prev; prev();
+    const save = async (i, n) => { let c = 0; await sync.commit(s => { c = H.setLoanParc(s, jobId, l.key, i, n, l.asOf); }); toast(i ? `Parcela corrigida${c ? ` · ${c} lançamento(s) atualizado(s)` : ''}.` : 'Voltou a valer o que o contracheque informa.'); jobSheet(jobId); };
+    panel.querySelector('#lp-cancel').onclick = () => jobSheet(jobId);
+    if (l.manual) panel.querySelector('#lp-reset').onclick = () => save(0, 0);
+    panel.querySelector('#lp-save').onclick = () => { const { i, n } = val(); if (!(i >= 1)) return toast('Informe o número da parcela.', true); if (n && i > n) return toast('A parcela não pode ser maior que o total.', true); save(i, n); };
+  });
+}
+function slipDetail(slipId) {
+  const st = S(), x = (st.slips || []).find(s => s.id === slipId); if (!x) return;
+  const job = (st.jobs || []).find(j => j.id === x.jobId);
+  const row = r => { const p = H.effParc(job, r, H.slipMonth(x)); return `<li><span class="grow">${esc(r.desc)}${p ? ` (${p.i}${p.n ? '/' + p.n : ''})` : ''} <small class="hint">${KIND_LBL[r.kind] || ''}${r.exp ? ' · despesa em ' + esc((itemById(r.exp) || {}).name || 'categoria apagada') : ''}</small></span><span class="num ${r.col === 'V' ? 'pos' : ''}">${r.col === 'D' ? '−' : ''}${C.brl(r.v)}</span></li>`; };
+  openSheet(`<h2>${esc(H.tipoLabel(x.tipo))} · ${shortM(H.slipMonth(x))}</h2>
+    <p class="hint">${esc(job ? job.name : '')} · crédito em ${C.fmtD(x.credito)}/${x.credito.slice(0, 4)}${x.accountId && accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ' · só histórico (sem lançamento)'}</p>
+    <div class="kpis"><div class="kpi"><small>Bruto</small><b class="num">${C.brl(x.bruto)}</b></div><div class="kpi"><small>Descontos</small><b class="num neg">${C.brl(x.desc)}</b></div><div class="kpi"><small>Líquido</small><b class="num pos">${C.brl(x.liq)}</b></div></div>
+    <h3 class="sub">Proventos</h3><ul class="sublist calc">${x.rubs.filter(r => r.col === 'V').map(row).join('')}</ul>
+    <h3 class="sub">Descontos</h3><ul class="sublist calc">${x.rubs.filter(r => r.col === 'D').map(row).join('') || '<li>Nenhum.</li>'}</ul>
+    <p class="hint">Para mudar a classificação de uma rubrica, importe de novo este contracheque (ou o próximo) e altere na revisão.</p>
+    <div class="actions"><button class="btn danger" id="sd-del">Excluir</button><button class="btn primary" id="sd-back">Voltar</button></div>`, panel => {
+    panel.classList.add('wide');
+    panel.querySelector('#sd-back').onclick = () => jobSheet(x.jobId);
+    panel.querySelector('#sd-del').onclick = async () => {
+      if (!(await confirmBox('Excluir este contracheque e os lançamentos que ele criou (o líquido e os descontos em folha)?'))) return;
+      await sync.commit(s => H.removeSlip(s, slipId)); toast('Contracheque excluído.'); jobSheet(x.jobId);
     };
   });
 }
@@ -790,6 +965,8 @@ function pageAgenda() {
     const ok = e.target.closest('[data-ok]'); if (ok) return confirmPending(ok.dataset.ok);
     const px = e.target.closest('[data-pix]'); if (px) { const t = S().tx.find(x => x.id === px.dataset.pix), who = t && payeeOf(t); return who && pixSheet(who, t.amount, t.id); }
     if (e.target.id === 'fx-new') return txSheet(null, { freq: 'fixa' });
+    if (e.target.id === 'job-imp') return pickImportFile({});
+    const jb = e.target.closest('[data-job]'); if (jb) return jobSheet(jb.dataset.job);
     const rc = e.target.closest('[data-rec]'); if (rc) return recSheet(rc.dataset.rec);
     const sg = e.target.closest('[data-sug]'); if (sg) return adoptSuggestion(ui._sug[+sg.dataset.sug]);
     const ig = e.target.closest('[data-ign]'); if (ig) return ignoreSuggestion(ui._sug[+ig.dataset.ign]);
@@ -999,7 +1176,7 @@ function pageResumo() {
   if (view === 'orc') return pageOrcamento(seg);
   if (view === 'ano') return pageAno(seg);
   const st = S(), m = ui.month;
-  const sum = C.monthSummary(st, m), cats = C.byCategory(st, m), recs = C.byCategory(st, m, 'receita');
+  const sum = C.monthSummary(st, m), cats = C.byCategory(st, m), recs = C.byCategory(st, m, 'receita'), inv = C.invFlow(st, m);
   const series = C.monthSeries(st, m, 6);
   const max = Math.max(1, ...series.map(x => Math.max(x.rec, x.desp)));
   const W = 320, H = 150, bw = 18, gap = W / 6;
@@ -1018,6 +1195,8 @@ function pageResumo() {
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
+    <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} descontados em folha.` : ''}</p>
+    ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
     <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1)}</div>
     <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
       <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
@@ -1119,14 +1298,20 @@ function pageAno(seg) {
 function pageContas() {
   const st = S(), today = M.todayISO();
   const bal = C.balances(st, today, true), proj = C.balances(st, today.slice(0, 7) + '-31', false);
-  const debs = st.accounts.filter(a => a.nature === 'debito' && a.active !== false);
+  const allDeb = st.accounts.filter(a => a.nature === 'debito' && a.active !== false);
+  const debs = allDeb.filter(a => !a.inv), invs = allDeb.filter(a => a.inv);
   const cards = st.accounts.filter(a => a.nature === 'credito' && a.active !== false);
   const archived = st.accounts.filter(a => a.active === false);
-  const total = debs.reduce((s, a) => s + (bal[a.id] || 0), 0);
+  const total = debs.reduce((s, a) => s + (bal[a.id] || 0), 0), invTotal = invs.reduce((s, a) => s + (bal[a.id] || 0), 0);
   let html = `<div class="cols"><div class="card"><h2>Saldo hoje</h2><div class="num" style="font-size:28px;font-weight:700">${C.brl(total)}</div>
-    <p class="hint">Só o que já foi pago ou recebido.</p><ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
+    <p class="hint">Saldo inicial de cada conta + o que já entrou − o que já saiu. Pendentes e compras no cartão ainda não pagas não contam. Toque na conta para ver a conta completa.</p><ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
       <small>No fim do mês, com pendentes: ${C.brl(proj[a.id] || 0)}</small></span><span class="num ${bal[a.id] < 0 ? 'neg' : ''}">${C.brl(bal[a.id] || 0)}</span></li>`).join('')}</ul>
     <button class="link" data-new="debito">+ Nova conta</button></div>${resCard(st, today, total)}`;
+  html += `<div class="card" id="inv-card"><h2>Investimentos</h2>${invs.length ? `<div class="num" style="font-size:22px;font-weight:700">${C.brl(invTotal)}</div>
+      <p class="hint">Fica fora do Saldo hoje. Para investir a sobra do mês, lance uma <b>Transferência</b> da conta para o investimento: não conta como despesa.</p>
+      <ul class="list wrap">${invs.map(a => { const y = C.invYield(st, a.id, today); return `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b><small>Rendimento registrado: ${C.brl(y.mes)} no mês · ${C.brl(y.ano)} no ano</small></span><span class="num">${C.brl(bal[a.id] || 0)}</span></li>`; }).join('')}</ul>`
+    : '<p class="hint">Dinheiro aplicado (poupança, CDB, Tesouro, fundos, corretora). Cadastre a conta de investimento com o valor que já tem lá; para investir a sobra do mês, lance uma <b>Transferência</b> da conta corrente para ela. Transferência não é despesa.</p>'}
+    <button class="link" data-new="inv">+ Nova conta de investimento</button></div>`;
   html += `<div class="card"><h2>Cartões</h2>${cards.length ? '<p class="hint">Toque no cartão para ver as faturas.</p>' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
     const comp = C.cardCycle(c, today).comp, f = C.faturaOf(st, c.id, comp);
     return `<li data-card="${c.id}"><span class="t"><b>${esc(c.name)}</b><small>Fatura aberta: ${C.monthLabel(comp).toLowerCase()} · vence ${C.fmtD(f.date)}</small></span><span class="num">${C.brl(f.total)}</span></li>`;
@@ -1140,6 +1325,22 @@ function pageContas() {
     const c = e.target.closest('[data-card]'); if (c) return faturaSheet(c.dataset.card);
     const li = e.target.closest('[data-acc]'); if (li) accSheet(accById(li.dataset.acc));
   };
+}
+
+/* de onde vem o saldo de uma conta, linha a linha */
+function saldoHTML(acc) {
+  const today = M.todayISO(), b = C.balanceBreakdown(S(), acc.id, today); if (!b) return '';
+  const line = (label, v, sign) => v ? `<li><span class="grow">${label}</span><span class="num">${sign}${C.brl(Math.abs(v))}</span></li>` : '';
+  const n = b.now, p = b.pend, fat = p.fat + p.cardPay;
+  const pend = line('A receber até o fim do mês', p.rec, '+') + line('A pagar até o fim do mês', p.deb, '−') + line('Faturas de cartão a pagar', fat, '−') + line('Transferências previstas (entrada)', p.trfIn, '+') + line('Transferências previstas (saída)', p.trfOut, '−');
+  return `<details class="rgroup" id="a-calc" open><summary>Como chegamos neste valor</summary>
+    <ul class="sublist calc"><li><span class="grow">Saldo inicial${b.initialDate ? ' (fim do dia ' + C.fmtD(b.initialDate) + '/' + b.initialDate.slice(2, 4) + ')' : ''}</span><span class="num">${C.brl(b.initial)}</span></li>
+      ${line(acc.inv ? 'Entradas' : 'Receitas já recebidas', n.rec, '+')}${line(acc.inv ? 'Saídas' : 'Despesas já pagas', n.deb, '−')}${line('Pagamentos de fatura de cartão', n.cardPay, '−')}
+      ${line(acc.inv ? 'Aportes (transferências recebidas)' : 'Transferências recebidas', n.trfIn, '+')}${line(acc.inv ? 'Resgates (transferências enviadas)' : 'Transferências enviadas', n.trfOut, '−')}
+      ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+')}${line('Faturas marcadas como pagas sem lançamento', n.fat, '−')}
+      <li class="tot"><span class="grow">= Saldo hoje</span><span class="num">${C.brl(n.total)}</span></li>
+      ${acc.inv ? '' : pend + `<li class="tot"><span class="grow">= No fim do mês, com pendentes</span><span class="num">${C.brl(b.end.total)}</span></li>`}</ul>
+    <p class="hint">${b.initialDate ? `Lançamentos até ${C.fmtD(b.initialDate)}/${b.initialDate.slice(2, 4)} já estão dentro do saldo inicial e não contam de novo. ` : ''}${acc.inv ? '' : 'Compra no cartão só sai da conta quando a fatura é paga; desconto em folha não sai da conta. Se o valor não bate com o banco, confira o saldo inicial e a data dele, e veja se há lançamento pendente que já foi pago ou movimento que falta importar.'}</p></details>`;
 }
 
 /* ----- reservas ----- */
@@ -1387,6 +1588,7 @@ function fixasHTML(st) {
   const sug = C.detectRecurring(st, today);
   const P = C.parcelSummary(st, today);
   let html = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
+  html += jobsHTML(st);
   html += block('Despesas fixas', out.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, sem data para acabar, até você encerrar.')
     + block('Despesas variáveis', out.filter(x => x.r.kind === 'var'), 'Sempre existem, mas o valor muda. O previsto é a média dos 3 últimos meses pagos.')
     + block('Receitas que se repetem', inc);
@@ -1622,20 +1824,26 @@ function faturaSheet(cardId, comp) {
 }
 
 function accSheet(acc, nature) {
-  nature = acc ? acc.nature : nature;
-  const credit = nature === 'credito';
+  const invNew = !acc && nature === 'inv';
+  nature = acc ? acc.nature : invNew ? 'debito' : nature;
+  const credit = nature === 'credito', isInv = acc ? !!acc.inv : invNew;
   openSheet('', panel => {
-    panel.innerHTML = `<h2>${acc ? 'Editar' : 'Novo'} ${credit ? 'cartão' : 'conta'}</h2>
-      <label for="a-name">Nome</label><input id="a-name" value="${esc(acc ? acc.name : '')}">
+    panel.innerHTML = `<h2>${acc ? esc(acc.name) : 'Nov' + (credit ? 'o cartão' : isInv ? 'a conta de investimento' : 'a conta')}</h2>
+      ${acc && !credit ? saldoHTML(acc) : ''}
+      ${acc && isInv ? '<button class="btn block" id="a-yield">Atualizar valor de hoje (registrar rendimento)</button>' : ''}
+      ${acc ? `<h3 class="sub">${credit ? 'Dados do cartão' : 'Dados da conta'}</h3>` : ''}
+      <label for="a-name">Nome</label><input id="a-name" value="${esc(acc ? acc.name : '')}" ${isInv && !acc ? 'placeholder="Ex.: Tesouro, CDB, corretora"' : ''}>
       ${credit ? `<div class="grid2"><div><label>Fecha no dia</label><input id="a-close" inputmode="numeric" value="${acc ? acc.closeDay : ''}"></div>
         <div><label>Vence no dia</label><input id="a-due" inputmode="numeric" value="${acc ? acc.dueDay : ''}"></div></div>
         <label>Fatura paga pela conta</label><select id="a-pay">${optAccounts('debito', acc && acc.payAccount)}</select>`
-        : `<div class="grid2"><div><label for="a-ini">Saldo inicial (R$)</label><div class="pm"><input id="a-ini" inputmode="decimal" value="${acc ? moneyText(acc.initial) : ''}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>
+        : `<div class="grid2"><div><label for="a-ini">${isInv ? 'Valor aplicado (R$)' : 'Saldo inicial (R$)'}</label><div class="pm"><input id="a-ini" inputmode="decimal" value="${acc ? moneyText(acc.initial) : ''}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>
            <div><label for="a-inid">No fim do dia</label><input id="a-inid" type="date" value="${acc && acc.initialDate ? acc.initialDate : (acc ? '' : yesterday())}"></div></div>
-           <p class="hint">Lançamentos até essa data já estão dentro do saldo inicial e não mudam o saldo. Sem data, todos os lançamentos contam.</p>`}
+           <p class="hint">Lançamentos até essa data já estão dentro do saldo inicial e não mudam o saldo. Sem data, todos os lançamentos contam.</p>
+           <label class="check"><input type="checkbox" id="a-inv" ${isInv ? 'checked' : ''}> Conta de investimento (fica fora do "Saldo hoje"; mandar dinheiro para ela é transferência, não despesa)</label>`}
       <div class="actions">${acc ? `<button class="btn ${acc.active === false ? '' : 'danger'}" id="a-off">${acc.active === false ? 'Reativar' : 'Arquivar'}</button>` : ''}<button class="btn" id="a-cancel">Cancelar</button><button class="btn primary" id="a-save">Salvar</button></div>
       ${acc ? '<p class="hint">Arquivar esconde das listas, mas mantém os lançamentos antigos.</p>' : ''}`;
     panel.querySelector('#a-cancel').onclick = closeSheet;
+    if (panel.querySelector('#a-yield')) panel.querySelector('#a-yield').onclick = () => yieldSheet(acc);
     if (acc) panel.querySelector('#a-off').onclick = async () => {
       const on = acc.active === false;
       if (!on && !(await confirmBox(`Arquivar ${acc.name}?`))) return;
@@ -1648,13 +1856,35 @@ function accSheet(acc, nature) {
         f.closeDay = +panel.querySelector('#a-close').value; f.dueDay = +panel.querySelector('#a-due').value; f.payAccount = panel.querySelector('#a-pay').value;
         if (!(f.closeDay >= 1 && f.closeDay <= 31 && f.dueDay >= 1 && f.dueDay <= 31)) return toast('Dias de 1 a 31.', true);
         if (!f.payAccount) return toast('Cadastre antes uma conta para pagar a fatura.', true);
-      } else { f.initial = C.parseMoney(panel.querySelector('#a-ini').value); f.initialDate = panel.querySelector('#a-inid').value || undefined; }
+      } else { f.initial = C.parseMoney(panel.querySelector('#a-ini').value); f.initialDate = panel.querySelector('#a-inid').value || undefined; f.inv = panel.querySelector('#a-inv').checked; }
       await sync.commit(s => {
-        if (acc) { const a = s.accounts.find(x => x.id === acc.id); Object.assign(a, f); M.touch(a); }
+        if (acc) { const a = s.accounts.find(x => x.id === acc.id); Object.assign(a, f); if (!f.inv) delete a.inv; M.touch(a); }
         else s.accounts.push(M.newAccount(f));
       });
       closeSheet(); toast('Salvo.');
     };
+  });
+}
+/* investimento: informa quanto vale hoje; a diferença para o saldo calculado vira rendimento (ou perda) */
+function yieldSheet(acc) {
+  const today = M.todayISO(), cur = C.balances(S(), today, true)[acc.id] || 0;
+  openSheet(`<h2>${esc(acc.name)}: valor de hoje</h2>
+    <p class="hint">Pelo app, esta conta tem <b class="num">${C.brl(cur)}</b> (valor aplicado + aportes − resgates + rendimentos já registrados). Digite quanto o banco ou a corretora mostra hoje: a diferença é registrada como rendimento, sem entrar nas receitas do mês.</p>
+    <label for="y-val">Valor de hoje (R$)</label><input id="y-val" inputmode="decimal" placeholder="0,00">
+    <p class="hint" id="y-prev"></p>
+    <div class="actions"><button class="btn" id="y-cancel">Cancelar</button><button class="btn primary" id="y-save">Registrar</button></div>`, panel => {
+    const diff = () => C.r2(C.parseMoney(panel.querySelector('#y-val').value) - cur);
+    panel.oninput = () => { const v = panel.querySelector('#y-val').value, d = diff(); panel.querySelector('#y-prev').textContent = !v ? '' : d === 0 ? 'Igual ao valor do app: nada a registrar.' : d > 0 ? `Rendimento de ${C.brl(d)}.` : `Perda de valor de ${C.brl(-d)}.`; };
+    panel.querySelector('#y-cancel').onclick = () => accSheet(accById(acc.id));
+    panel.querySelector('#y-save').onclick = async () => {
+      const d = diff(); if (!panel.querySelector('#y-val').value) return toast('Informe o valor de hoje.', true);
+      if (d === 0) return toast('Igual ao valor do app: nada a registrar.');
+      const nm = x => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const it = S().items.find(i => nm(i.name) === 'rendimentos de aplicacoes');
+      await sync.commit(s => { s.tx.push(M.newYield({ date: today, accountId: acc.id, diff: d, itemId: d > 0 && it ? it.id : '' })); });
+      closeSheet(); toast(d > 0 ? `Rendimento de ${C.brl(d)} registrado.` : `Perda de ${C.brl(-d)} registrada.`);
+    };
+    setTimeout(() => { const v = panel.querySelector('#y-val'); if (v) v.focus(); }, 50);
   });
 }
 

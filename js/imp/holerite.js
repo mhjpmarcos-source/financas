@@ -1,0 +1,456 @@
+/* Contracheque (holerite): leitura genérica do PDF, classificação das rubricas, piso previsto e lançamento.
+
+   Leitura sem depender do modelo do empregador. Muitos contracheques não trazem os títulos "Vencimentos" e
+   "Descontos" como texto, então a âncora é a conta: a linha de totais (bruto e descontos) seguida do líquido
+   (bruto − descontos). A posição dos dois totais define as duas colunas, e cada rubrica vai para a mais próxima.
+   No fim a leitura é conferida: soma das rubricas = totais impressos.
+
+   Como entra no app:
+   - a receita é o LÍQUIDO, na data de crédito (bate com o extrato do banco);
+   - descontos que são gastos da pessoa (consignado, plano de saúde, sindicato) viram despesas "em folha":
+     aparecem nas categorias, mas não mexem no saldo (o líquido já veio sem eles). No resumo do mês o mesmo
+     valor entra como receita e como despesa, para o resultado continuar igual ao que passou pela conta;
+   - a previsão dos meses seguintes é o piso fixo (proventos fixos − descontos fixos − impostos de um mês sem
+     eventuais), corrigido a cada contracheque. */
+import * as M from '../model.js';
+
+const r2 = v => Math.round((+v || 0) * 100) / 100;
+const MONEY = /^-?\d{1,3}(\.\d{3})*,\d{2}-?$/;
+const money = s => { const neg = /^-|-$/.test(s); const v = parseFloat(s.replace(/-/g, '').replace(/\./g, '').replace(',', '.')); return r2(neg ? -v : v); };
+const nrm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const mAdd = (m, n) => { let [y, mo] = m.split('-').map(Number); mo += n; y += Math.floor((mo - 1) / 12); mo = ((mo - 1) % 12 + 12) % 12 + 1; return y + '-' + String(mo).padStart(2, '0'); };
+const iso = s => { const m = String(s || '').match(/(\d{2})\/(\d{2})\/(\d{2,4})/); if (!m) return ''; const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2]}-${m[1]}`; };
+const lastDay = m => new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
+const MESES = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+/* ---------- leitura ---------- */
+const KEYWORDS = /l[ií]quido|sal[aá]rio|inss|irrf|fgts|admiss|folha|vencimentos|proventos|holerite|contracheque|demonstrativo de pagamento/i;
+
+/* linha de totais: dois valores (bruto, descontos) e, até 3 linhas abaixo, o líquido; ou os três na mesma linha */
+function findTotals(L, start) {
+  for (let i = start; i < L.length; i++) {
+    const nums = L[i].cells.filter(c => MONEY.test(c.s));
+    // linha só de números, ou com rótulo de total: uma rubrica comum (descrição + referência + valor) não serve de âncora
+    if (nums.length !== L[i].cells.length && !/tota(l|is)|bruto|proventos|vencimentos|l[ií]quido/i.test(L[i].text)) continue;
+    if (nums.length === 3) {
+      const [a, b, c] = nums.map(x => money(x.s));
+      if (a > 0 && b >= 0 && Math.abs(a - b - c) < 0.011) return { i, j: i, bruto: a, desc: b, liq: c, xv: nums[0].x2, xd: nums[1].x2, cv: (nums[0].x + nums[0].x2) / 2, cd: (nums[1].x + nums[1].x2) / 2 };
+    }
+    if (nums.length !== 2) continue;
+    const b = money(nums[0].s), d = money(nums[1].s);
+    if (!(b > 0) || d < 0 || d > b + 0.005) continue;
+    for (let j = i + 1; j < Math.min(i + 4, L.length); j++) {
+      for (const x of L[j].cells) if (MONEY.test(x.s) && Math.abs(money(x.s) - (b - d)) < 0.011) return { i, j, bruto: b, desc: d, liq: money(x.s), xv: nums[0].x2, xd: nums[1].x2, cv: (nums[0].x + nums[0].x2) / 2, cd: (nums[1].x + nums[1].x2) / 2 };
+    }
+  }
+  return null;
+}
+
+function rubricRow(line, t) {
+  const c = line.cells, nums = c.filter(x => MONEY.test(x.s));
+  if (!nums.length || nums.length === c.length) return null; // sem valor, ou só números (linha de bases)
+  const last = nums[nums.length - 1];
+  let dv = Math.abs(last.x2 - t.xv), dd = Math.abs(last.x2 - t.xd);
+  if (Math.min(dv, dd) > 8) { // valores não alinhados à direita: compara pelo centro
+    const mid = (last.x + last.x2) / 2; dv = Math.abs(mid - t.cv); dd = Math.abs(mid - t.cd);
+    if (Math.min(dv, dd) > 30) return null;
+  }
+  const text = c.filter(x => !MONEY.test(x.s));
+  const code = text.length > 1 && /^\d{1,6}$/.test(text[0].s) ? text[0].s : '';
+  const desc = text.slice(code ? 1 : 0).filter(x => x.x < last.x).map(x => x.s).join(' ').replace(/\s+/g, ' ').trim();
+  if (!desc || !/[a-zA-ZÀ-ú]/.test(desc)) return null;
+  const v = money(last.s); if (!(Math.abs(v) > 0)) return null;
+  return { code, desc, ref: nums.length > 1 ? nums[nums.length - 2].s : '', col: dv < dd ? 'V' : 'D', v };
+}
+
+function headerInfo(L, t) {
+  const text = L.slice(0, Math.min(L.length, t.j + 6)).map(l => l.text).join('\n');
+  const out = { tipoLabel: '', de: '', ate: '', credito: '', banco: '', margem: null, faixa: null, empregador: '' };
+  // empregador: primeiro trecho com letras no alto da página (sem CNPJ)
+  for (const l of L.slice(0, 4)) { const c = l.cells.find(x => /[a-zA-ZÀ-ú]{3}/.test(x.s) && !/\d{2}\.\d{3}\.\d{3}\/\d{4}/.test(x.s)); if (c) { out.empregador = c.s.replace(/\s+/g, ' ').trim().slice(0, 60); break; } }
+  // período: "de 01/10/26 a 31/10/26", ou referência/competência "10/2026" ou "outubro de 2026"
+  for (const l of L.slice(0, t.i)) {
+    const m = l.text.match(/(\d{2}\/\d{2}\/\d{2,4})\s*a\s*(\d{2}\/\d{2}\/\d{2,4})/);
+    if (!m) continue;
+    out.de = iso(m[1]); out.ate = iso(m[2]);
+    const cell = l.cells.find(x => x.s.includes(m[1]));
+    out.tipoLabel = ((cell ? cell.s : l.text).slice(0, (cell ? cell.s : l.text).indexOf(m[1])) || '').replace(/\s*d\s*e\s*$/i, '').replace(/^.*\d{2}\/\d{2}\/\d{2,4}\s*/, '').replace(/\s+/g, ' ').trim();
+    break;
+  }
+  if (!out.ate) {
+    const m = text.match(/(?:refer[eê]ncia|compet[eê]ncia|m[eê]s\s*\/\s*ano|per[ií]odo|folha)\D{0,14}(\d{2})\s*\/\s*(\d{4})/i);
+    const n = !m && nrm(text).match(new RegExp('(' + MESES.join('|') + ')\\s*(?:de|/)\\s*(\\d{4})'));
+    const ym = m ? `${m[2]}-${m[1]}` : n ? `${n[2]}-${String(MESES.indexOf(n[1]) + 1).padStart(2, '0')}` : '';
+    if (ym && +ym.slice(5) >= 1 && +ym.slice(5) <= 12) { out.de = ym + '-01'; out.ate = ym + '-' + lastDay(ym); }
+  }
+  let m = text.match(/(?:data\s+d[eo]\s+cr[eé]dito|cr[eé]dito\s+em|data\s+(?:d[eo]\s+)?pagamento|pagamento\s+em|pago\s+em)\s*:?\s*(\d{2}\/\d{2}\/\d{2,4})/i);
+  if (m) out.credito = iso(m[1]);
+  m = text.match(/margem\s+consign[aá]vel\s*:?\s*([\d.]+,\d{2})/i); if (m) out.margem = money(m[1]);
+  const bl = L.find(l => /\bag(?:[eê]ncia)?\.?\s*:/i.test(l.text));
+  if (bl) out.banco = bl.cells[0].s.split(/\s+ag(?:[eê]ncia)?\.?\s*:/i)[0].replace(/[\s-]+$/, '').trim().slice(0, 40);
+  // linha de bases (só números) depois do líquido: o último valor costuma ser a faixa do IR
+  for (const l of L.slice(t.j + 1, t.j + 6)) {
+    const c = l.cells;
+    if (c.length >= 4 && c.every(x => MONEY.test(x.s))) { const f = money(c[c.length - 1].s); if ([7.5, 15, 22.5, 27.5].includes(f)) out.faixa = f; break; }
+  }
+  return out;
+}
+
+const TIPOS = { normal: 'Folha mensal', '13adt': 'Adiantamento do 13º', '13': '13º salário', ferias: 'Férias', adt: 'Adiantamento', resc: 'Rescisão', outro: 'Outra folha' };
+export const tipoLabel = t => TIPOS[t] || TIPOS.outro;
+function tipoOf(label, rubs) {
+  const s = nrm(label), all13 = rubs.filter(r => r.col === 'V').every(r => /13|decimo/.test(nrm(r.desc)));
+  if (/adiant|adto/.test(s)) return all13 || /13|decimo/.test(s) ? '13adt' : 'adt';
+  if (/13|decimo/.test(s) || (all13 && rubs.length && !/normal|mensal/.test(s))) return rubs.some(r => /adto|adiant/.test(nrm(r.desc)) && r.col === 'V') ? '13adt' : '13';
+  if (/ferias/.test(s)) return 'ferias';
+  if (/rescis/.test(s)) return 'resc';
+  return 'normal';
+}
+
+/* pages: saída de pdfLines. Devolve null quando o PDF não parece um contracheque. */
+export function parseHolerite(pages) {
+  const blocks = []; let head = null, first = null;
+  const all = pages.map(L0 => L0.map(l => ({ ...l, cells: l.cells.map(c => ({ ...c, s: c.s.replace(/[\r\n]+/g, '').trim() })).filter(c => c.s) })).map(l => ({ ...l, text: l.cells.map(c => c.s).join('   ') })));
+  const fullText = all.map(L => L.map(l => l.text).join('\n')).join('\n');
+  if (!KEYWORDS.test(fullText)) return null;
+  for (const L of all) {
+    let start = 0;
+    for (;;) {
+      const t = findTotals(L, start); if (!t) break;
+      const rows = L.slice(start, t.i).map(l => rubricRow(l, t)).filter(Boolean);
+      if (!first) { first = t; head = headerInfo(L, t); }
+      blocks.push(rows); start = t.j + 1;
+    }
+  }
+  if (!first) return null;
+  // cada página traz duas vias iguais, ou a folha 1 e a folha 2 (e a página seguinte repete): blocos idênticos contam uma vez
+  const seen = new Set(), rubs = [];
+  for (const b of blocks) { const k = JSON.stringify(b); if (!b.length || seen.has(k)) continue; seen.add(k); rubs.push(...b); }
+  if (!rubs.length) return null;
+  const somaV = r2(rubs.filter(r => r.col === 'V').reduce((s, r) => s + r.v, 0)), somaD = r2(rubs.filter(r => r.col === 'D').reduce((s, r) => s + r.v, 0));
+  const ok = Math.abs(somaV - first.bruto) < 0.011 && Math.abs(somaD - first.desc) < 0.011;
+  const kw = (fullText.match(new RegExp(KEYWORDS.source, 'gi')) || []).length;
+  if (!ok && kw < 3) return null;
+  const tipo = tipoOf(head.tipoLabel, rubs);
+  if (!head.ate && head.credito) { const m = mAdd(head.credito.slice(0, 7), +head.credito.slice(8) <= 15 ? -1 : 0); head.de = m + '-01'; head.ate = m + '-' + lastDay(m); }
+  return {
+    kind: 'holerite', empregador: head.empregador || 'Empregador', tipo, tipoTexto: head.tipoLabel, de: head.de, ate: head.ate, credito: head.credito,
+    banco: head.banco, margem: head.margem, faixa: head.faixa, bruto: first.bruto, desc: first.desc, liq: first.liq, rubs, somaV, somaD, ok,
+    check: { ok, msg: ok ? `Leitura confere: as ${rubs.length} rubricas somam o bruto e os descontos impressos.` : `As rubricas lidas somam ${somaV.toFixed(2)} de proventos e ${somaD.toFixed(2)} de descontos, mas o contracheque informa ${first.bruto.toFixed(2)} e ${first.desc.toFixed(2)}. Confira antes de aplicar.` }
+  };
+}
+
+/* ---------- classificação das rubricas ---------- */
+const TAX = /\binss\b|\birrf?\b|imposto de renda|previdencia social|\bir\b/;
+const EVENTUAL = /ferias|\b13\b|13o|decimo|abono|\bdif\b|\bdif\.|diferenca|extra|banco de? ?horas|retroativ|media|\badto\b|adiant|substitui|dobrado|noturn|repouso|premio|\bplr\b|rescis|bonus|aviso previo|indeniz/;
+const FIXED = /dias normais|salario|vencimento|ordenado|gratifica|auxilio|\bvale\b|adicional|emprestimo|consign|sind|assist|\bass\.? med|plano|pensao|previd|seguro|mensalidade|odont|anuenio|quinquenio/;
+const LOAN = /emprestimo|consign|financiamento/;
+const NO_TAX_BASE = /auxilio|reembolso|indeniz|\bvale\b|ajuda de custo/;
+export const rubKey = r => r.code ? 'c' + r.code : 'd' + M.normDesc(r.desc);
+
+/* parcela do consignado na coluna de referência: "17,36" = 17 de 36; ",00" = total não informado */
+export function parcOf(r) {
+  if (r.col !== 'D' || !LOAN.test(nrm(r.desc))) return null;
+  const m = String(r.ref || '').match(/^(\d{1,3}),(\d{2})$/); if (!m) return null;
+  const i = +m[1], n = +m[2]; if (!i) return null;
+  return { i, n: n >= i ? n : 0 };
+}
+
+/* parcela que vale: a correção feita à mão (job.parc[rubrica] = {i, n, asOf: 'AAAA-MM'}) anda um número por mês a partir
+   do mês em que foi informada; sem correção, vale o que o contracheque traz. */
+const monthsBetween = (a, b) => (+b.slice(0, 4) * 12 + +b.slice(5, 7)) - (+a.slice(0, 4) * 12 + +a.slice(5, 7));
+export function effParc(job, r, month) {
+  const ov = job && job.parc && job.parc[rubKey(r)];
+  if (ov && ov.i && month) { const i = ov.i + monthsBetween(ov.asOf, month); return i >= 1 && (!ov.n || i <= ov.n) ? { i, n: ov.n || 0, manual: true } : null; }
+  return parcOf(r);
+}
+const parcText = p => p ? ` (${p.i}${p.n ? '/' + p.n : ''})` : '';
+
+/* categoria sugerida para um desconto que é gasto da pessoa; '' = não contar como despesa */
+function suggestExp(S, r) {
+  const d = nrm(r.desc);
+  const find = name => { const it = S.items.find(i => nrm(i.name) === nrm(name) && i.active !== false && (S.groups.find(g => g.id === i.groupId) || {}).kind === 'despesa'); return it ? it.id : ''; };
+  if (LOAN.test(d)) return find('Parcela de empréstimo');
+  if (/assist|\bass\.? med|plano|saude|odont|unimed|medic/.test(d)) return find('Plano de saúde');
+  if (/sind|associa|conselho|anuidade/.test(d)) return find('Taxas e anuidades profissionais');
+  if (/previd.*(priv|compl)|funp/.test(d)) return find('Previdência privada');
+  if (/pensao/.test(d)) return find('Outras despesas');
+  if (/vale.?transp|\bvt\b/.test(d)) return find('Transporte público');
+  return '';
+}
+
+/* fix (todo mês), ev (eventual) ou tax (imposto); usa o que a pessoa já escolheu, depois o dicionário, depois a frequência */
+export function classifyRub(S, job, r, hist) {
+  const key = rubKey(r), saved = job && job.rubs && job.rubs[key];
+  if (saved) return { key, kind: saved.kind, exp: saved.exp || '', how: 'escolha anterior' };
+  const d = nrm(r.desc);
+  let kind, how = 'nome';
+  if (r.col === 'D' && TAX.test(d) && !EVENTUAL.test(d.replace(/\binss\b|\birrf?\b/g, ''))) kind = 'tax';
+  else if (r.col === 'D' && TAX.test(d)) kind = 'evtax'; // imposto sobre eventual (férias, 13º): eventual
+  else if (EVENTUAL.test(d)) kind = 'ev';
+  else if (FIXED.test(d)) kind = 'fix';
+  else {
+    how = 'frequência';
+    const last = (hist || []).slice(-4), freq = last.filter(h => h.rubs.some(x => rubKey(x) === key)).length;
+    kind = last.length < 3 || freq >= 3 ? 'fix' : 'ev';
+  }
+  if (kind === 'evtax') kind = 'ev';
+  return { key, kind, exp: r.col === 'D' && kind === 'fix' ? suggestExp(S, r) : '', how };
+}
+
+/* ---------- fontes de renda e contracheques guardados ---------- */
+export const jobIdOf = name => 'j_' + M.hashStr(M.normDesc(name));
+export const slipIdOf = (jobId, h) => 'sl_' + M.hashStr([jobId, h.tipo, h.de, h.ate].join('|'));
+export const slipsOf = (S, jobId) => (S.slips || []).filter(s => s.jobId === jobId).sort((a, b) => (a.ate + a.tipo < b.ate + b.tipo ? -1 : 1));
+const normalSlips = (S, jobId) => slipsOf(S, jobId).filter(s => s.tipo === 'normal');
+export const slipMonth = s => (s.ate || s.credito || '').slice(0, 7);
+
+/* mês cheio (sem férias nem dias a menos) e mês limpo (cheio e quase sem eventuais) */
+function slipFlags(slip) {
+  const dias = slip.rubs.find(r => r.col === 'V' && /dias normais|dias trabalhados|salario base|^salario$/.test(nrm(r.desc)));
+  const ref = dias ? parseFloat(String(dias.ref || '').replace(/\./g, '').replace(',', '.')) : NaN;
+  const full = !(ref > 0 && ref < 28) && !slip.rubs.some(r => /ferias/.test(nrm(r.desc)));
+  const evV = slip.rubs.filter(r => r.col === 'V' && r.kind === 'ev').reduce((s, r) => s + r.v, 0);
+  return { full, clean: full && evV <= 0.02 * slip.bruto, evV: r2(evV), evD: r2(slip.rubs.filter(r => r.col === 'D' && r.kind === 'ev').reduce((s, r) => s + r.v, 0)) };
+}
+
+/* piso fixo previsto a partir de uma lista de contracheques mensais (já com kind em cada rubrica), em ordem.
+   proventos fixos: do último mês cheio; descontos fixos: do último; impostos: do último mês limpo
+   (ajustados pela faixa do IR quando os proventos fixos tributáveis mudaram desde então). */
+export function pisoOf(list) {
+  if (!list.length) return null;
+  const F = list.map(slipFlags), L = list.length - 1;
+  let Si = L; while (Si > 0 && !F[Si].full) Si--; if (!F[Si].full) Si = L;
+  let Ci = L; while (Ci > 0 && !F[Ci].clean) Ci--; const hasClean = F[Ci].clean; if (!hasClean) Ci = L;
+  const sum = (slip, f) => r2(slip.rubs.filter(f).reduce((s, r) => s + r.v, 0));
+  // num mês com eventuais (ex.: substituição), uma rubrica fixa pode vir reduzida: vale o maior entre ele e o último mês limpo
+  const cleanV = new Map(list[Ci].rubs.filter(r => r.col === 'V' && r.kind === 'fix').map(r => [rubKey(r), r.v]));
+  const baseV = list[Si].rubs.filter(r => r.col === 'V' && r.kind === 'fix').map(r => ({ ...r, v: hasClean && !F[Si].clean ? Math.max(r.v, cleanV.get(rubKey(r)) || 0) : r.v }));
+  const fixV = r2(baseV.reduce((s, r) => s + r.v, 0)), fixD = sum(list[L], r => r.col === 'D' && r.kind === 'fix');
+  let tax = sum(list[Ci], r => r.col === 'D' && r.kind === 'tax');
+  const taxable = rubs => r2(rubs.filter(r => r.col === 'V' && r.kind === 'fix' && !NO_TAX_BASE.test(nrm(r.desc))).reduce((s, r) => s + r.v, 0));
+  const faixa = list[Ci].faixa || 0;
+  if (hasClean && Si !== Ci && faixa) tax = r2(tax + faixa / 100 * (taxable(baseV) - taxable(list[Ci].rubs)));
+  const folha = sum(list[L], r => r.col === 'D' && r.kind === 'fix' && r.exp);
+  return { piso: r2(Math.max(0, fixV - fixD - tax)), fixV, fixD, tax, folha, exact: hasClean, fromV: slipMonth(list[Si]), fromTax: slipMonth(list[Ci]), fromD: slipMonth(list[L]) };
+}
+
+/* o que mudou no fixo deste contracheque mensal em relação aos anteriores (lista em ordem, o atual por último).
+   Proventos fixos: contra o último mês cheio; impostos: contra o último mês limpo (senão a diferença é efeito de eventual);
+   descontos fixos: contra o mês anterior. Os eventuais do mês vão à parte. */
+export function slipDiff(before, cur) {
+  const out = { changes: [], eventuais: cur.rubs.filter(r => r.kind === 'ev').map(r => ({ desc: r.desc, col: r.col, v: r.v })) };
+  const prev = before[before.length - 1]; if (!prev) return out;
+  const fc = slipFlags(cur);
+  const lastWhere = f => { for (let i = before.length - 1; i >= 0; i--) if (f(slipFlags(before[i]))) return before[i]; return null; };
+  const ref = r => r.col === 'V' ? (fc.full ? lastWhere(x => x.full) : null) : r.kind === 'tax' ? (fc.clean ? lastWhere(x => x.clean) : null) : prev;
+  const has = (slip, r) => slip.rubs.find(x => rubKey(x) === rubKey(r));
+  cur.rubs.filter(r => r.kind !== 'ev').forEach(r => {
+    const base = ref(r); if (!base) { if (!before.some(s => has(s, r))) out.changes.push({ what: 'novo', desc: r.desc, col: r.col, v: r.v }); return; }
+    const p = has(base, r);
+    if (!p) { if (!has(prev, r)) out.changes.push({ what: 'novo', desc: r.desc, col: r.col, v: r.v }); }
+    else if (Math.abs(p.v - r.v) > 1) out.changes.push({ what: 'valor', desc: r.desc, col: r.col, v: r.v, from: p.v });
+  });
+  prev.rubs.filter(r => r.kind !== 'ev' && !has(cur, r) && (r.col === 'D' && r.kind !== 'tax' ? true : fc.full)).forEach(r => out.changes.push({ what: 'saiu', desc: r.desc, col: r.col, v: r.v }));
+  return out;
+}
+
+/* consignados em andamento, pelo último contracheque mensal */
+export function loansOf(S, jobId) {
+  const last = normalSlips(S, jobId).pop(); if (!last) return [];
+  const job = (S.jobs || []).find(j => j.id === jobId);
+  return last.rubs.filter(r => r.col === 'D' && LOAN.test(nrm(r.desc))).map(r => {
+    const p = effParc(job, r, slipMonth(last)), left = p && p.n ? p.n - p.i : null;
+    return { key: rubKey(r), manual: !!(p && p.manual), desc: r.desc, v: r.v, i: p ? p.i : null, n: p && p.n ? p.n : null, left, end: left != null ? mAdd(slipMonth(last), left) : '', rest: left != null ? r2(left * r.v) : null, asOf: slipMonth(last) };
+  });
+}
+
+/* ---------- plano de importação (um ou vários contracheques do mesmo empregador) ---------- */
+export function guessAccount(S, banco) {
+  const list = S.accounts.filter(a => a.nature === 'debito' && a.active !== false && !a.inv);
+  if (!banco) return '';
+  const b = nrm(banco), first = b.split(' ').filter(w => w.length > 2 && !/^banco$/.test(w))[0] || b;
+  const sig = b.split(' ').filter(w => w.length > 2 && !/^(de|do|da)$/.test(w)).map(w => w[0]).join(''); // "banco do brasil" → "bb"
+  const hit = list.find(a => nrm(a.name).includes(first)) || list.find(a => new RegExp('\\b' + sig + '\\b').test(nrm(a.name))) || (/\bbrasil\b/.test(b) && list.find(a => /\bbb\b|ourocard/.test(nrm(a.name))));
+  return hit ? hit.id : '';
+}
+const incomeItem = (S, tipo) => {
+  const want = tipo === '13' || tipo === '13adt' ? '13º salário' : tipo === 'ferias' ? 'Férias' : 'Salário';
+  const rec = S.items.filter(i => i.active !== false && (S.groups.find(g => g.id === i.groupId) || {}).kind === 'receita');
+  return (rec.find(i => nrm(i.name) === nrm(want)) || rec.find(i => nrm(i.name) === 'salario') || rec[0] || {}).id || '';
+};
+
+export function buildSlipPlan(S, parsedList) {
+  const emp = parsedList[0].empregador, jobId = jobIdOf(emp);
+  const job = (S.jobs || []).find(j => j.id === jobId) || null;
+  const stored = slipsOf(S, jobId);
+  const docs = parsedList.filter(h => h.empregador === emp).slice().sort((a, b) => (a.ate + a.tipo < b.ate + b.tipo ? -1 : 1));
+  const other = parsedList.length - docs.length;
+  const banks = {};
+  const slips = [];
+  docs.forEach(h => {
+    const id = slipIdOf(jobId, h);
+    if (slips.some(s => s.id === id)) return; // o mesmo contracheque escolhido duas vezes
+    const old = stored.find(s => s.id === id);
+    const credito = h.credito || (old && old.credito) || (h.ate ? mAdd(h.ate.slice(0, 7), 1) + '-05' : M.todayISO());
+    if (!(h.banco in banks)) banks[h.banco] = (old && old.accountId) || guessAccount(S, h.banco) || (job && job.accountId) || '';
+    slips.push({ id, h, credito, already: !!old, post: !old || !!old.txId, banco: h.banco });
+  });
+  // rubricas de todos os documentos, com a classificação (a mesma rubrica tem a mesma classificação em todos)
+  const rubs = new Map(), hist = stored.filter(s => s.tipo === 'normal');
+  const seq = [...hist, ...slips.filter(s => s.h.tipo === 'normal' && !s.already).map(s => s.h)];
+  slips.forEach(s => s.h.rubs.forEach(r => {
+    const key = rubKey(r);
+    if (!rubs.has(key)) { const c = classifyRub(S, job, r, seq); rubs.set(key, { key, desc: r.desc, col: r.col, kind: c.kind, exp: c.exp, how: c.how, n: 0, last: 0, loan: !!parcOf(r) || LOAN.test(nrm(r.desc)) }); }
+    const x = rubs.get(key); x.n++; x.last = r.v; x.desc = r.desc;
+    if (x.loan && s.h.tipo === 'normal') { const p = effParc(job, r, slipMonth(s.h)); x.pi = p ? p.i : 0; x.pn = p ? p.n : 0; x.pm = slipMonth(s.h); }
+  }));
+  return { jobId, job, empregador: emp, slips, rubs: [...rubs.values()], banks, forecast: true, ruleId: (job && job.recId) || '', other, incomeItem: (job && job.itemId) || incomeItem(S, 'normal') };
+}
+
+/* contracheques mensais como ficarão depois de aplicar o plano (guardados + novos), com kind/exp do plano */
+export function planSlips(S, plan) {
+  const kinds = new Map(plan.rubs.map(r => [r.key, r]));
+  const tag = rubs => rubs.map(r => { const k = kinds.get(rubKey(r)); return k ? { ...r, kind: k.kind, exp: k.exp } : r; });
+  const map = new Map(slipsOf(S, plan.jobId).map(s => [s.id, { ...s, rubs: tag(s.rubs) }]));
+  plan.slips.forEach(s => map.set(s.id, { id: s.id, jobId: plan.jobId, tipo: s.h.tipo, de: s.h.de, ate: s.h.ate, credito: s.credito, bruto: s.h.bruto, desc: s.h.desc, liq: s.h.liq, faixa: s.h.faixa, margem: s.h.margem, banco: s.h.banco, rubs: tag(s.h.rubs) }));
+  return [...map.values()].sort((a, b) => (a.ate + a.tipo < b.ate + b.tipo ? -1 : 1));
+}
+export function planPiso(S, plan) { return pisoOf(planSlips(S, plan).filter(s => s.tipo === 'normal')); }
+export function planDiff(S, plan) {
+  const all = planSlips(S, plan).filter(s => s.tipo === 'normal');
+  const news = plan.slips.filter(s => s.h.tipo === 'normal'); if (!news.length) return null;
+  const cur = all.find(s => s.id === news[news.length - 1].id), i = all.indexOf(cur);
+  return { cur, prev: i > 0 ? all[i - 1] : null, ...slipDiff(all.slice(0, i), cur) };
+}
+
+/* registro com id fixo que já foi excluído antes: a nova gravação precisa ser mais recente que a marca de exclusão */
+const revive = (S, r) => { M.touch(r); if (S.deleted[r.id] >= r.upd) r.upd = S.deleted[r.id] + 1; return r; };
+const shortM = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m.slice(5, 7) - 1] + '/' + m.slice(2, 4);
+const days = (a, b) => Math.abs(Math.round((Date.parse(a + 'T12:00') - Date.parse(b + 'T12:00')) / 864e5));
+
+/* aplica: guarda os contracheques, lança o líquido e os descontos em folha e atualiza a previsão */
+export function applySlipPlan(S, plan, today = M.todayISO()) {
+  if (!S.jobs) S.jobs = []; if (!S.slips) S.slips = [];
+  const res = { slips: 0, created: 0, updated: 0, folha: 0, piso: null };
+  let job = S.jobs.find(j => j.id === plan.jobId);
+  if (!job) { job = { id: plan.jobId, name: plan.empregador, accountId: '', itemId: plan.incomeItem, recId: '', rubs: {}, upd: 0 }; S.jobs.push(job); }
+  plan.rubs.forEach(r => { job.rubs[r.key] = { desc: r.desc, col: r.col, kind: r.kind, exp: r.col === 'D' && r.kind === 'fix' ? (r.exp || '') : '' }; });
+  job.itemId = plan.incomeItem || job.itemId;
+  plan.rubs.filter(r => r.pedit && r.pm).forEach(r => { job.parc = Object.assign({}, job.parc, { [r.key]: { i: Math.max(0, +r.pi || 0), n: Math.max(0, +r.pn || 0), asOf: r.pm } }); if (!job.parc[r.key].i) delete job.parc[r.key]; });
+  const kinds = new Map(plan.rubs.map(r => [r.key, r]));
+  const name = job.name;
+  // dois contracheques creditados no mesmo dia (ex.: salário + adiantamento do 13º) podem ter vindo do extrato como um crédito só:
+  // o primeiro assume esse lançamento (com o seu líquido) e o outro cria o dele; o total não muda e nada duplica
+  const combo = new Map(), groups = {};
+  plan.slips.forEach(s => { const acc = plan.banks[s.banco] || ''; if (s.post && acc && s.h.liq > 0 && !(S.slips.find(x => x.id === s.id) || {}).txId) (groups[acc + '|' + s.credito] = groups[acc + '|' + s.credito] || []).push(s); });
+  Object.entries(groups).forEach(([k, g]) => {
+    if (g.length < 2) return;
+    const [acc, date] = k.split('|'), free = t => t.type === 'rec' && !t.slipId && !t.prev && !t.recId && t.accountId === acc && days(t.date, date) <= 4;
+    if (g.some(s => S.tx.some(t => free(t) && Math.abs(t.amount - s.h.liq) < 0.005))) return;
+    const sum = r2(g.reduce((x, s) => x + s.h.liq, 0)), hit = S.tx.find(t => free(t) && Math.abs(t.amount - sum) < 0.005);
+    if (hit) combo.set(g[0].id, hit);
+  });
+  S.slips.filter(x => x.jobId === job.id).forEach(x => { // a reclassificação vale também para os contracheques já guardados
+    let ch = false;
+    x.rubs.forEach(r => { const k = kinds.get(rubKey(r)); if (k && r.kind !== k.kind) { r.kind = k.kind; ch = true; } });
+    if (ch) M.touch(x);
+  });
+  for (const s of plan.slips) {
+    const h = s.h, accountId = plan.banks[s.banco] || '', post = s.post && !!accountId && h.liq > 0;
+    const rubs = h.rubs.map(r => { const k = kinds.get(rubKey(r)) || {}; return { code: r.code, desc: r.desc, ref: r.ref, col: r.col, v: r.v, kind: k.kind || 'ev', exp: r.col === 'D' && k.kind === 'fix' ? (k.exp || '') : '' }; });
+    let slip = S.slips.find(x => x.id === s.id);
+    if (!slip) { slip = { id: s.id, jobId: job.id }; S.slips.push(slip); }
+    Object.assign(slip, { tipo: h.tipo, de: h.de, ate: h.ate, credito: s.credito, bruto: h.bruto, desc: h.desc, liq: h.liq, faixa: h.faixa || null, margem: h.margem ?? null, banco: h.banco || '', accountId, rubs });
+    res.slips++;
+    const m = slipMonth(slip), label = `${h.tipo === 'normal' ? 'Salário' : tipoLabel(h.tipo)} ${name} · ${shortM(m)}`;
+    const cm = s.credito.slice(0, 7);
+    let tx = slip.txId ? S.tx.find(t => t.id === slip.txId) : null;
+    if (!post) { // só histórico: tira os lançamentos que este contracheque tinha criado
+      S.tx.filter(t => t.slipId === slip.id).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+      delete slip.txId; revive(S, slip); continue;
+    }
+    const itemId = h.tipo === 'normal' ? job.itemId : incomeItem(S, h.tipo);
+    const rule = job.recId && (S.rec || []).find(r => r.id === job.recId);
+    if (!tx && h.tipo === 'normal' && rule) tx = S.tx.find(t => t.recId === rule.id && t.recM === cm && !t.slipId) || null; // mês da regra do piso (previsto ou confirmado à mão)
+    if (!tx) { // já veio do extrato ou foi lançado à mão: mesmo valor, mesma conta, data próxima
+      const hit = combo.get(s.id) || S.tx.filter(t => t.type === 'rec' && !t.slipId && !t.prev && t.accountId === accountId && Math.abs(t.amount - h.liq) < 0.005 && days(t.date, s.credito) <= 4).sort((a, b) => days(a.date, s.credito) - days(b.date, s.credito))[0];
+      if (hit) {
+        tx = hit;
+        if (h.tipo === 'normal' && rule) { const pv = S.tx.find(t => t.recId === rule.id && t.recM === cm && t.prev); if (pv) M.removeRecord(S, 'tx', pv.id); if (!tx.recId) { tx.recId = rule.id; tx.recM = cm; } }
+      }
+    }
+    if (tx) { res.updated++; if (!tx.impKey) { tx.date = s.credito; tx.desc = label; } }
+    else { tx = M.newTx({ type: 'rec', date: s.credito, accountId, itemId, amount: h.liq, desc: label, status: 'liq', origin: 'import' }); tx.id = 't_' + slip.id; if (S.tx.some(t => t.id === tx.id)) tx.id = M.uid('t'); S.tx.push(tx); res.created++; }
+    Object.assign(tx, { amount: h.liq, accountId, status: 'liq', slipId: slip.id, jobId: job.id }); if (!tx.itemId) tx.itemId = itemId;
+    delete tx.prev; revive(S, tx);
+    slip.txId = tx.id;
+    // descontos em folha contados como despesa: mesmo dia, não mexem no saldo
+    const want = rubs.filter(r => r.col === 'D' && r.exp);
+    const keep = new Set();
+    want.forEach((r, i) => {
+      const id = `t_${slip.id}_${i}`, p = effParc(job, r, m); keep.add(id);
+      let d = S.tx.find(t => t.id === id);
+      if (!d) { d = M.newTx({ type: 'deb', date: s.credito, accountId, itemId: r.exp, amount: r.v, desc: '', status: 'liq', origin: 'import' }); d.id = id; S.tx.push(d); }
+      Object.assign(d, { date: s.credito, accountId, itemId: r.exp, amount: r.v, desc: r.desc + parcText(p), status: 'liq', folha: true, folhaItem: tx.itemId, slipId: slip.id, jobId: job.id, rk: rubKey(r) });
+      revive(S, d); res.folha++;
+    });
+    S.tx.filter(t => t.slipId === slip.id && t.folha && !keep.has(t.id)).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+    revive(S, slip);
+  }
+  // previsão: piso a partir do mês seguinte ao crédito do último contracheque mensal
+  const normals = normalSlips(S, job.id), last = normals[normals.length - 1];
+  const P = pisoOf(normals); res.piso = P;
+  if (last && last.accountId) job.accountId = last.accountId;
+  if (plan.forecast && P && P.piso > 0 && last && last.accountId) {
+    const cm = last.credito.slice(0, 7), day = Math.min(28, Math.max(1, +last.credito.slice(8, 10)));
+    // a previsão começa no mês do último crédito, ou no mês atual se ele já passou (meses antigos sem contracheque não viram "atrasados")
+    const startM = cm >= today.slice(0, 7) ? cm : today.slice(0, 7);
+    let rule = (plan.ruleId || job.recId) && (S.rec || []).find(r => r.id === (plan.ruleId || job.recId));
+    if (!rule) {
+      rule = M.newRec({ kind: 'fixa', type: 'rec', desc: 'Salário ' + name, itemId: job.itemId, accountId: last.accountId, amount: P.piso, day, start: startM });
+      S.rec.push(rule);
+    }
+    if (startM > rule.start) { rule.start = startM; M.touch(rule); }
+    S.tx.filter(t => t.recId === rule.id && t.prev && t.recM < startM).map(t => t.id).forEach(id => M.removeRecord(S, 'tx', id));
+    job.recId = rule.id; rule.jobId = job.id;
+    const cur = last.txId && S.tx.find(t => t.id === last.txId);
+    if (cur && !cur.recId) { const pv = S.tx.find(t => t.recId === rule.id && t.recM === cm && t.prev); if (pv) M.removeRecord(S, 'tx', pv.id); if (!S.tx.some(t => t.recId === rule.id && t.recM === cm)) { cur.recId = rule.id; cur.recM = cm; M.touch(cur); } }
+    if (rule.end) M.reopenRec(S, rule);
+    M.editRec(S, rule, { amount: P.piso, day, accountId: last.accountId, itemId: job.itemId }, mAdd(cm, 1));
+    M.ensureRecurring(S, today);
+  }
+  revive(S, job);
+  return res;
+}
+
+/* correção manual da parcela de um consignado: i = parcela no mês asOf, n = total (0 = não informado; i = 0 apaga a correção).
+   Atualiza a descrição dos descontos em folha já lançados. */
+export function setLoanParc(S, jobId, key, i, n, asOf) {
+  const job = (S.jobs || []).find(j => j.id === jobId); if (!job) return 0;
+  job.parc = Object.assign({}, job.parc);
+  if (i > 0) job.parc[key] = { i: Math.round(i), n: Math.max(0, Math.round(n || 0)), asOf }; else delete job.parc[key];
+  M.touch(job);
+  let c = 0;
+  slipsOf(S, jobId).forEach(sl => sl.rubs.filter(r => rubKey(r) === key).forEach(r => {
+    const d = S.tx.find(t => t.slipId === sl.id && t.folha && t.rk === key); if (!d) return;
+    const desc = r.desc + parcText(effParc(job, r, slipMonth(sl)));
+    if (d.desc !== desc) { d.desc = desc; M.touch(d); c++; }
+  }));
+  return c;
+}
+
+/* exclui um contracheque guardado e os lançamentos que ele criou */
+export function removeSlip(S, slipId) {
+  const ids = S.tx.filter(t => t.slipId === slipId).map(t => t.id);
+  ids.forEach(id => M.removeRecord(S, 'tx', id));
+  M.removeRecord(S, 'slips', slipId);
+  return ids.length;
+}
+export function removeJob(S, jobId) {
+  slipsOf(S, jobId).forEach(s => removeSlip(S, s.id));
+  const job = (S.jobs || []).find(j => j.id === jobId);
+  const rule = job && job.recId && (S.rec || []).find(r => r.id === job.recId);
+  if (rule) M.removeRec(S, rule);
+  M.removeRecord(S, 'jobs', jobId);
+}

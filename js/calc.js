@@ -94,6 +94,7 @@ export function balances(S, date, lq) {
   const add = (id, v, d) => { if (d <= date && id in out && d > start[id]) out[id] += v; };
   S.tx.forEach(t => {
     if (lq && t.status !== 'liq') return;
+    if (t.folha) return; // desconto em folha: o salário já entrou líquido, não sai da conta de novo
     if (t.type === 'rec') add(t.accountId, t.amount, t.date);
     else if (t.type === 'deb') add(t.accountId, -t.amount, t.date);
     else if (t.type === 'trf') { add(t.accountId, -t.amount, t.date); add(t.toAccountId, t.amount, t.date); }
@@ -105,15 +106,70 @@ export function balances(S, date, lq) {
   return out;
 }
 
-/* resumo do mês: receitas, despesas (débito + compras no cartão da competência) */
+/* resumo do mês: receitas, despesas (débito + compras no cartão da competência).
+   Desconto em folha contado como despesa (consignado, plano de saúde): entra nas despesas e, no mesmo valor, nas receitas,
+   porque o salário foi lançado pelo líquido; assim o resultado continua igual ao que passou pela conta.
+   Ajuste de valor de investimento (adj) fica de fora. */
 export function monthSummary(S, m) {
-  let rec = 0, desp = 0;
+  let rec = 0, desp = 0, folha = 0;
   S.tx.forEach(t => {
+    if (t.adj) return;
     if (t.type === 'rec' && mOf(t.date) === m) rec += t.amount;
-    else if (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) desp += t.amount;
+    else if (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) { desp += t.amount; if (t.folha) { rec += t.amount; folha += t.amount; } }
     else if (t.type === 'cred' && txComp(S, t) === m) desp += t.amount;
   });
-  return { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp) };
+  return { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp), folha: r2(folha) };
+}
+
+/* dinheiro que foi para investimentos no mês: aportes − resgates (transferências entre conta comum e conta de investimento) */
+export function invFlow(S, m) {
+  const inv = new Set(S.accounts.filter(a => a.inv).map(a => a.id));
+  let inn = 0, out = 0;
+  if (inv.size) S.tx.forEach(t => {
+    if (t.type !== 'trf' || mOf(t.date) !== m) return;
+    const a = inv.has(t.accountId), b = inv.has(t.toAccountId);
+    if (b && !a) inn += t.amount; else if (a && !b) out += t.amount;
+  });
+  return { aportes: r2(inn), resgates: r2(out), net: r2(inn - out) };
+}
+/* rendimento registrado (ajustes de valor) de uma conta de investimento, no mês e no ano de `date` */
+export function invYield(S, accId, date) {
+  let mes = 0, ano = 0;
+  S.tx.forEach(t => {
+    if (!t.adj || t.accountId !== accId || t.date > date) return;
+    const v = t.type === 'rec' ? t.amount : -t.amount;
+    if (t.date.slice(0, 4) === date.slice(0, 4)) ano += v;
+    if (t.date.slice(0, 7) === date.slice(0, 7)) mes += v;
+  });
+  return { mes: r2(mes), ano: r2(ano) };
+}
+
+/* de onde vem o saldo de uma conta: saldo inicial + entradas − saídas, e o que ainda está pendente até o fim do mês */
+export function balanceBreakdown(S, accId, today) {
+  const a = S.accounts.find(x => x.id === accId); if (!a) return null;
+  const start = a.initialDate || '', eom = today.slice(0, 7) + '-31';
+  const parts = (limit, lq) => {
+    const p = { rec: 0, deb: 0, cardPay: 0, trfIn: 0, trfOut: 0, adj: 0, fat: 0, n: 0 };
+    const ok = (d, t) => d <= limit && d > start && !(lq && t && t.status !== 'liq');
+    S.tx.forEach(t => {
+      if (t.folha || !ok(t.date, t)) return;
+      if (t.type === 'trf') { if (t.accountId === accId) { p.trfOut += t.amount; p.n++; } if (t.toAccountId === accId) { p.trfIn += t.amount; p.n++; } return; }
+      if (t.accountId !== accId) return;
+      if (t.adj) p.adj += t.type === 'rec' ? t.amount : -t.amount;
+      else if (t.type === 'rec') p.rec += t.amount;
+      else if (t.type === 'deb') { if (t.cardPay) p.cardPay += t.amount; else p.deb += t.amount; }
+      else return;
+      p.n++;
+    });
+    faturas(S).forEach(f => { if (f.total <= 0 || f.accountId !== accId || f.rest <= 0 || (lq && f.status !== 'liq')) return; if (f.date <= limit && f.date > start) p.fat += f.rest; });
+    Object.keys(p).forEach(k => { p[k] = r2(p[k]); });
+    p.total = r2((+a.initial || 0) + p.rec - p.deb - p.cardPay + p.trfIn - p.trfOut + p.adj - p.fat);
+    return p;
+  };
+  const now = parts(today, true), end = parts(eom, false);
+  const d = k => r2(end[k] - now[k]);
+  return { initial: r2(+a.initial || 0), initialDate: start, now, end,
+    pend: { rec: d('rec'), deb: d('deb'), cardPay: d('cardPay'), trfIn: d('trfIn'), trfOut: d('trfOut'), fat: d('fat') } };
 }
 
 /* compras de uma fatura (cartão + competência) */
@@ -132,15 +188,17 @@ export function faturaOf(S, cardId, comp) {
 export function byCategory(S, m, kind = 'despesa') {
   const groups = {};
   S.tx.forEach(t => {
+    if (t.adj) return;
     const isExp = (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) || (t.type === 'cred' && txComp(S, t) === m);
+    const isFolha = isExp && t.folha; // desconto em folha: também soma na receita do salário (ver monthSummary)
     const isRec = t.type === 'rec' && mOf(t.date) === m;
-    if (!(kind === 'despesa' ? isExp : isRec)) return;
-    const it = S.items.find(i => i.id === t.itemId), g = it && S.groups.find(x => x.id === it.groupId);
+    if (!(kind === 'despesa' ? isExp : isRec || isFolha)) return;
+    const it = S.items.find(i => i.id === (kind === 'receita' && isFolha ? t.folhaItem : t.itemId)), g = it && S.groups.find(x => x.id === it.groupId);
     const gk = g ? g.id : '_', ik = it ? it.id : '_';
     const G = groups[gk] = groups[gk] || { id: gk, name: g ? g.name : 'Sem categoria', color: g ? g.color : '#90a4ae', total: 0, items: {} };
     G.total += t.amount;
     const I = G.items[ik] = G.items[ik] || { id: ik, name: it ? it.name : 'Sem categoria', total: 0, n: 0 };
-    I.total += t.amount; I.n++;
+    I.total += t.amount; if (!(kind === 'receita' && isFolha)) I.n++;
   });
   return Object.values(groups).map(g => ({ ...g, total: r2(g.total), items: Object.values(g.items).map(i => ({ ...i, total: r2(i.total) })).sort((a, b) => b.total - a.total) }))
     .sort((a, b) => b.total - a.total);
@@ -207,7 +265,7 @@ export function detectRecurring(S, today = M.todayISO()) {
   const ign = new Set((S.config && S.config.recIgnore) || []);
   const groups = new Map();
   S.tx.forEach(t => {
-    if (!['deb', 'cred', 'rec'].includes(t.type) || t.cardPay || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.amount <= 0) return;
+    if (!['deb', 'cred', 'rec'].includes(t.type) || t.cardPay || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.folha || t.adj || t.slipId || t.amount <= 0) return;
     if (t.type !== 'cred' && t.status !== 'liq') return;
     const m = t.type === 'cred' ? txComp(S, t) : t.date.slice(0, 7);
     if (!months.includes(m)) return;
@@ -309,7 +367,7 @@ export function txCsv(S, from, to) {
     .forEach(t => {
       const it = S.items.find(i => i.id === t.itemId), g = it && S.groups.find(x => x.id === it.groupId);
       const signed = t.type === 'rec' ? t.amount : -t.amount;
-      rows.push([t.date.split('-').reverse().join('/'), txComp(S, t).split('-').reverse().join('/'), t.cardPay ? 'Pagamento de fatura' : TYPE[t.type] || t.type, t.desc || '',
+      rows.push([t.date.split('-').reverse().join('/'), txComp(S, t).split('-').reverse().join('/'), t.cardPay ? 'Pagamento de fatura' : t.folha ? 'Desconto em folha' : t.adj ? 'Ajuste de investimento' : TYPE[t.type] || t.type, t.desc || '',
         it ? it.name : '', g ? g.name : '', acc(t.accountId), t.type === 'trf' ? acc(t.toAccountId) : '', csvNum(signed),
         t.status === 'pend' ? 'Pendente' : 'Confirmado', t.seriesId ? `${t.seriesIdx}/${t.seriesN}` : '', t.origin === 'import' ? 'Importado' : 'Manual']);
     });

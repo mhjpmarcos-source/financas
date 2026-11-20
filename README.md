@@ -7,7 +7,14 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.8.2.** Novidades:
+**Versão atual: 0.9.0.** Novidades:
+- **0.9.0:**
+  - **Contracheque (PDF):** importado pelo mesmo botão Importar, um ou vários de uma vez. O leitor é genérico: acha a linha de totais pela conta (bruto − descontos = líquido), separa proventos e descontos pela posição e confere a soma. A receita entra pelo **líquido**, na data de crédito. Cada rubrica é classificada como fixa, eventual ou imposto (pelo nome e pelo histórico; dá para corrigir na revisão, e a escolha vale para os próximos).
+  - **Descontos em folha:** os que são gastos da pessoa (consignado, plano de saúde, sindicato) aparecem como despesa na categoria, sem mexer no saldo, porque o líquido já veio sem eles. No resumo do mês o mesmo valor entra na receita e na despesa.
+  - **Consignados:** o número da parcela (ex.: 17 de 36) é lido do contracheque, com data de término e valor que falta. Dá para corrigir à mão a parcela e o total, na revisão ou em Agenda › Fixas e parcelas › Renda do emprego.
+  - **Piso previsto:** os próximos meses ficam previstos com o líquido esperado num mês sem eventuais, recalculado a cada contracheque, com a lista do que mudou no fixo.
+  - **Investimentos:** conta de investimento fica fora do "Saldo hoje"; mandar dinheiro para ela é transferência (não é despesa); "Atualizar valor de hoje" registra o rendimento sem entrar nas receitas do mês. Ao importar um extrato, aplicações e resgates são sugeridos como transferência para a conta de investimento.
+  - **Como chegamos neste valor:** tocar numa conta mostra o saldo linha a linha (saldo inicial, entradas, saídas, transferências, faturas) e o que ainda está pendente até o fim do mês.
 - **0.8.2:**
   - **Planilha de parcelamentos:** importada pelo mesmo botão Importar, lança como previstas as parcelas que ainda vão vir de compras parceladas em andamento, cada uma na fatura do mês certo. O formato está descrito em `js/imp/parcelas.js`.
   - **Reimportar uma fatura importada antes da versão 0.8** agora também lança as parcelas futuras.
@@ -93,6 +100,6 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.
 - Testes de navegador também para a Agenda e as dívidas: `e2e/agenda.e2e.mjs`.
-- Testes (pasta `tests`): `npm install && python3 fixtures/gerar.py && npm test`. Os documentos de teste são **fictícios** e gerados pelo `gerar.py`. Testes de navegador: `e2e/basico.e2e.mjs` e `e2e/importacao.e2e.mjs` (precisam do Playwright e de um servidor local na raiz do app; instruções no topo de cada arquivo).
+- Testes (pasta `tests`): `npm install && python3 fixtures/gerar.py && npm test`. Os documentos de teste são **fictícios** e gerados pelo `gerar.py`. Testes de navegador: `e2e/basico.e2e.mjs`, `e2e/importacao.e2e.mjs`, `e2e/contracheque.e2e.mjs` e os demais da pasta `e2e` (precisam do Playwright e de um servidor local na raiz do app; instruções no topo de cada arquivo).
 - Leitor de PDF: `vendor/pdfjs` (pdf.js da Mozilla, licença Apache-2.0), carregado só na hora de importar.
 - Nunca coloque faturas, extratos, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`, `*.csv`, `*.ofx` e planilhas).
