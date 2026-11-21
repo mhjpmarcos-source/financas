@@ -52,6 +52,35 @@ await p.click('[data-tab=ajustes]'); assert.equal(await p.locator('#fab').count(
 // Fixas e parcelas: cadastro no alto
 await p.click('[data-tab=agenda]'); await p.click('#agseg [data-v=fix]'); assert(await inView('#fx-new'));
 
+// nada passa da largura da tela (nem nas folhas), também num aparelho estreito
+const wide = () => p.evaluate(() => {
+  const w = document.documentElement.clientWidth, bad = [];
+  if (document.documentElement.scrollWidth > w + 1) bad.push('página ' + document.documentElement.scrollWidth);
+  const pn = document.querySelector('#sheet .panel'); if (pn && pn.scrollWidth > pn.clientWidth + 1) bad.push('folha ' + pn.scrollWidth + '>' + pn.clientWidth);
+  for (const el of document.querySelectorAll('#page input, #page select, #page .btn, #page .card, #page .hcard, #sheet .panel input, #sheet .panel select, #sheet .panel .btn, .tabs button')) {
+    if (el.closest('.scrollx, .quick') || !el.offsetParent) continue;
+    const r = el.getBoundingClientRect(); if (r.right > w + 1 || r.left < -1) bad.push((el.id || el.className || el.tagName) + ' ' + Math.round(r.left) + '–' + Math.round(r.right));
+  }
+  return bad;
+});
+for (const [vw, vh] of [[390, 664], [320, 568]]) {
+  await p.setViewportSize({ width: vw, height: vh });
+  for (const t of ['lanc', 'agenda', 'resumo', 'contas', 'ajustes']) { await p.click(`[data-tab=${t}]`); await wait(80); assert.deepEqual(await wide(), [], `largura em ${t} (${vw})`); }
+  for (const v of ['fix', 'loans']) { await p.click('[data-tab=agenda]'); await p.click(`#agseg [data-v=${v}]`); assert.deepEqual(await wide(), [], `largura em agenda/${v} (${vw})`); }
+  for (const v of ['orc', 'ano']) { await p.click('[data-tab=resumo]'); await p.click(`[data-rv=${v}]`); assert.deepEqual(await wide(), [], `largura em resumo/${v} (${vw})`); }
+  await p.click('[data-rv=mes]');
+  await p.click('[data-tab=lanc]');
+  for (const k of ['deb', 'cred', 'rec', 'trf', 'pgto']) { await p.click(`[data-qa=${k}]`, { force: true }); await p.waitForSelector('#sheet-x'); await wait(80); assert.deepEqual(await wide(), [], `largura na folha ${k} (${vw})`); await p.click('#sheet-x'); }
+  await p.click('[data-tab=contas]'); await p.click('[data-card]'); await p.waitForSelector('#fa-imp'); assert.deepEqual(await wide(), [], `largura na fatura (${vw})`);
+  await p.click('#fa-edit'); await p.waitForSelector('#a-save'); assert.deepEqual(await wide(), [], `largura no cartão (${vw})`); await p.click('#sheet-x');
+  await p.click('#res-new'); await p.waitForSelector('#rs-save'); assert.deepEqual(await wide(), [], `largura na reserva (${vw})`); await p.click('#sheet-x');
+  await p.click('[data-tab=agenda]'); await p.click('#agseg [data-v=loans]'); await p.click('[data-newloan=out]'); await p.waitForSelector('#l-save'); assert.deepEqual(await wide(), [], `largura na dívida (${vw})`); await p.click('#sheet-x');
+  await p.click('#agseg [data-v=pend]');
+}
+// o campo de data segue a largura dos outros campos
+await p.setViewportSize({ width: 390, height: 664 }); await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.waitForSelector('#f-date');
+const bw = async s => Math.round((await p.locator(s).boundingBox()).width); assert.equal(await bw('#f-date'), await bw('#f-desc'), 'data com a mesma largura da descrição'); await p.click('#sheet-x');
+
 const real = errs.filter(e => !/Content Security Policy.*(frame-ancestors|report)/.test(e));
 assert.equal(real.length, 0, real.join('\n'));
 await browser.close(); console.log('E2E aparência OK');

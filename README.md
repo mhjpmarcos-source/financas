@@ -1,4 +1,4 @@
-# Finanças
+# Níquel
 
 Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados no **Google Drive de quem usa**. Feito primeiro para o celular (iPhone), com adaptação para computador.
 
@@ -7,7 +7,8 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.12.0.** Novidades:
+**Versão atual: 0.12.1.** Novidades:
+- **0.12.1:** o app passa a se chamar **Níquel** (antes "Finanças") e ganha ícone com a inicial. Nada muda nos dados: a pasta no Drive continua **Finanças (app)**, o arquivo continua `financas-dados.json` e o endereço do site é o mesmo.
 - **0.12.0:** **cara nova e ações à mão.** Aparência em Ajustes: modo **automático, claro ou escuro** e três **estilos** (Mata, Ameixa, Maré), cada um com cores, letra e formato de botão próprios; vale por aparelho. Topo colorido com o mês e o resultado em destaque; **atalhos** em Lançamentos (Importar, Despesa, Compra no cartão, Receita, Transferir, Pagar fatura); botão **+** em todas as abas. Na **fatura**, "Importar", "+ Compra", "Registrar pagamento" e "Editar cartão" ficam no alto, antes da lista de compras; em Lançamentos, cada fatura do mês tem "Abrir", "Importar" e "Pagar". Toda folha tem **botão de fechar** e os botões de salvar ficam presos embaixo; "+ Nova conta", "+ Novo cartão", "+ Nova reserva", "+ Eu devo" e os cadastros de Fixas e parcelas subiram para o título de cada bloco. No computador, o menu fica na lateral. Ícone novo.
 - **0.11.0:** **quem usa o cartão** (titular, adicional, virtual): em Contas › cartão › "Quem usa este cartão", cada final de 4 dígitos ganha um nome. As compras lidas da fatura (PDF, ou CSV com coluna "Final"/"Cartão") recebem a marca de quem usou, além da categoria, e a fatura e o Resumo mostram o total por pessoa. Por padrão é despesa de quem paga a fatura; se a pessoa devolve o dinheiro, as compras dela saem das despesas e o app cria um "a receber" por fatura, que o Pix dela quita pelo "Vincular a…" (se vier menos, o resto continua a receber). Editar a categoria de uma compra importada não a tira mais da fatura em que veio.
 - **0.10.2:** **fatura que o cartão não gerou** (mudança de vencimento): na tela da fatura que só tem parcelas previstas, "avise que esta fatura não existiu" passa parcelas e pagamentos para a fatura seguinte; as parcelas previstas acompanham a última parcela real de cada compra.

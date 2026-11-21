@@ -1,4 +1,4 @@
-/* Finanças · Fase 1 — núcleo: login, dados no aparelho + Drive, primeira configuração e telas básicas. */
+/* Níquel (antes "Finanças") · Fase 1 — núcleo: login, dados no aparelho + Drive, primeira configuração e telas básicas. */
 import * as auth from './auth.js';
 import * as sync from './sync.js';
 import * as drive from './drive.js';
@@ -14,7 +14,7 @@ import * as H from './imp/holerite.js';
 import * as L from './link.js';
 import * as PH from './holder.js';
 
-export const VERSION = '0.12.0';
+export const VERSION = '0.12.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -135,7 +135,7 @@ function route() {
 
 /* ---------- sem ID do cliente (quem publicar a própria cópia) ---------- */
 function screenNoClient() {
-  app().innerHTML = `<div class="hero"><img src="icons/icon-192.png" alt=""><h1>Finanças</h1>
+  app().innerHTML = `<div class="hero"><img src="icons/icon-192.png" alt=""><h1>Níquel</h1>
     <p>Esta cópia ainda não tem o <b>ID do cliente</b> do Google. Siga o README do projeto para criar o seu e cole aqui.</p>
     <label for="cid">ID do cliente OAuth</label><input id="cid" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="…apps.googleusercontent.com">
     <button class="btn primary block" id="saveCid" style="margin-top:12px">Salvar</button>
@@ -150,7 +150,7 @@ function screenNoClient() {
 
 /* ---------- boas-vindas ---------- */
 function screenWelcome() {
-  app().innerHTML = `<div class="hero"><img src="icons/icon-192.png" alt=""><h1>Finanças</h1>
+  app().innerHTML = `<div class="hero"><img src="icons/icon-192.png" alt=""><h1>Níquel</h1>
     <p>Seu controle financeiro, com os dados guardados no <b>seu</b> Google Drive. Ninguém mais tem acesso.</p>
     <button class="btn primary block" id="login" style="margin-top:18px">Entrar com o Google</button>
     <p class="hint" id="offmsg">${navigator.onLine ? '' : 'Sem internet. Conecte-se para o primeiro acesso.'}</p>
@@ -1719,7 +1719,7 @@ function lockScreen() {
   const st = lock.settings(); let pin = '';
   const draw = msg => {
     const w = lock.waitSeconds();
-    box.innerHTML = `<div class="lockin"><img src="icons/icon-192.png" alt=""><h1>Finanças</h1><p class="hint" id="lk-msg">${msg || (w ? `Muitas tentativas. Aguarde ${w} s.` : 'Digite o PIN')}</p>
+    box.innerHTML = `<div class="lockin"><img src="icons/icon-192.png" alt=""><h1>Níquel</h1><p class="hint" id="lk-msg">${msg || (w ? `Muitas tentativas. Aguarde ${w} s.` : 'Digite o PIN')}</p>
       <div class="dots">${Array.from({ length: st.pinLen }, (_, i) => `<i class="${i < pin.length ? 'on' : ''}"></i>`).join('')}</div>
       <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-k="${n}">${n}</button>`).join('')}
         ${st.bio ? '<button data-k="bio" aria-label="Usar Face ID ou Touch ID">◉</button>' : '<span></span>'}<button data-k="0">0</button><button data-k="del" aria-label="Apagar">⌫</button></div>
@@ -2357,7 +2357,7 @@ function pageAjustes() {
       <input type="file" id="impfile" accept=".json,application/json" hidden></div>
     <div class="card"><h2>Este aparelho</h2><p class="hint">Sair desconecta o Google. Remover apaga a cópia deste aparelho; os dados continuam no Drive.</p>
       <div class="row"><button class="btn" data-act="logout">Sair</button><button class="btn danger" data-act="forget">Remover dados deste aparelho</button></div></div>
-    <p class="hint" style="text-align:center">Finanças ${VERSION}</p>`;
+    <p class="hint" style="text-align:center">Níquel ${VERSION}</p>`;
   $('#impfile').onchange = ev => importFile(ev.target.files[0], false);
   bindSecurity();
   $('#page').onclick = async e => {

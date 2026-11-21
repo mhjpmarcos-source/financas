@@ -57,8 +57,8 @@ export async function bioAvailable() {
 }
 export async function enrollBio() {
   const cred = await navigator.credentials.create({ publicKey: {
-    challenge: rand(32), rp: { name: 'Finanças', id: location.hostname },
-    user: { id: rand(16), name: 'financas', displayName: 'Finanças' },
+    challenge: rand(32), rp: { name: 'Níquel', id: location.hostname },
+    user: { id: rand(16), name: 'financas', displayName: 'Níquel' },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
     authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' }, timeout: 60000
   } });

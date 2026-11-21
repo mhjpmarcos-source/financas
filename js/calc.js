@@ -398,7 +398,7 @@ export function yearCsv(S, year) {
 
 /* ---------- lembretes: arquivo de calendário (.ics) com os vencimentos pendentes ---------- */
 const icsEsc = s => String(s || '').replace(/[\\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
-export function icsPendings(S, { until, hour = 9, appName = 'Finanças' } = {}) {
+export function icsPendings(S, { until, hour = 9, appName = 'Níquel' } = {}) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//' + appName + '//PT-BR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:' + icsEsc(appName + ' · vencimentos')];
   pendings(S, until).forEach(p => {
