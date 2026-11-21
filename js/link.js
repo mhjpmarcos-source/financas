@@ -15,7 +15,7 @@ const days = (a, b) => Math.abs(Math.round((Date.parse(a + 'T12:00') - Date.pars
 export const keyOf = t => (t && t.origin === 'import' ? payKey(t.desc || '') : '');
 const monthOf = (S, t) => (t.type === 'cred' ? C.txComp(S, t) : t.date.slice(0, 7));
 /* só lançamentos comuns podem ser vinculados (nada de previsto, série, folha, ajuste, já vinculado) */
-export const canLink = t => !!t && !t.prev && !t.folha && !t.adj && !t.recId && !t.loanId && !t.seriesId && !t.parcKey && !t.slipId && ['deb', 'rec', 'cred'].includes(t.type);
+export const canLink = t => !!t && !t.prev && !t.folha && !t.adj && !t.reimb && !t.recId && !t.loanId && !t.seriesId && !t.parcKey && !t.slipId && ['deb', 'rec', 'cred'].includes(t.type);
 
 /* ---------- pagamento de fatura ---------- */
 /* transforma uma despesa da conta em pagamento de fatura; guarda o nome do banco para o cartão */
@@ -156,7 +156,7 @@ export function review(S) {
     const other = cur && !shares(cur) && cardList.find(c => c.id !== cur.id && shares(c));
     if (other) relink.push({ tx: t, from: cur.id, to: other.id });
   });
-  const nocat = real.filter(t => !t.itemId && !t.cardPay && t.type !== 'trf' && !ign.has(t.id));
+  const nocat = real.filter(t => !t.itemId && !t.cardPay && !t.reimb && t.type !== 'trf' && !ign.has(t.id));
   return { pay, relink, refund, nocat, n: pay.length + relink.length + refund.length + nocat.length };
 }
 export function ignoreReview(S, ids) {

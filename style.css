@@ -295,3 +295,7 @@ body.locked #app, body.locked #sheet, body.locked .sheet.ask{visibility:hidden}
 .list.rv .row{justify-content:flex-end}
 .newrow{display:flex; gap:8px; flex-wrap:wrap} .newrow .btn{flex:1 1 30%; padding:12px 8px; font-size:14px}
 .btn.small{padding:8px 12px; min-height:36px; font-size:14px}
+/* 0.11: quem usou o cartão */
+.tag.who{background:#ede7f6; color:#4a2c8a}
+.tag.who.reimb{background:#e0f2f1; color:#00695c}
+@media (prefers-color-scheme:dark){ .tag.who{background:#2c2440; color:#c9b8f0} .tag.who.reimb{background:#163330; color:#7fd6c9} }

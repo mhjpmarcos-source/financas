@@ -316,10 +316,10 @@ export function parseCsv(bytes) {
     detail: col(/DETALHE|COMPLEMENTO|MEMO|OBSERVA/),
     doc: col(/DOCUMENTO|^DOC\b|IDENTIFICADOR|^ID$|^N. ?DOC/),
     amount: col(/^VALOR\b|^AMOUNT|^QUANTIA|^VALOR \(R\$\)|^VALOR EM R\$/, /DOLAR|US\$|USD/),
-    debit: col(/DEBITO|SAIDA/), credit: col(/CREDITO|ENTRADA/),
+    debit: col(/DEBITO|SAIDA/), credit: col(/CREDITO|ENTRADA/), card: col(/^(CARTAO|FINAL|PORTADOR)\b/),
     type: col(/^TIPO/)
   };
-  if (c.title < 0) c.title = H.findIndex((h, i) => i !== c.date && i !== c.amount && i !== c.doc && h);
+  if (c.title < 0) c.title = H.findIndex((h, i) => i !== c.date && i !== c.amount && i !== c.doc && i !== c.card && h);
   const all = rows.map(r => r.join(' ')).join('\n');
   const out = { kind: 'extrato', bank: guessBank(all), lines: [], printed: [], saldoIni: null, saldoFim: null, csv: true };
   rows.slice(hi + 1).forEach(r => {
@@ -335,7 +335,7 @@ export function parseCsv(bytes) {
     if (/SALDO ANTERIOR/.test(T)) { out.saldoIni = v; out.saldoIniDate = date; return; }
     if (/^S\s?A\s?L\s?D\s?O$|SALDO FINAL|SALDO DO DIA|SALDO EM /.test(T)) { out.saldoFim = v; return; }
     const d = describe(title, detail, date);
-    out.lines.push({ date: d.date, bookDate: date, desc: d.desc, title, detail, amount: Math.abs(v), sign: v < 0 ? -1 : 1, dir: v < 0 ? 'out' : 'in', doc: c.doc >= 0 ? (r[c.doc] || '').trim() : '', parc: null, ...classifyRole(T + ' ' + norm(detail)) });
+    out.lines.push({ date: d.date, bookDate: date, desc: d.desc, title, detail, amount: Math.abs(v), sign: v < 0 ? -1 : 1, dir: v < 0 ? 'out' : 'in', doc: c.doc >= 0 ? (r[c.doc] || '').trim() : '', parc: null, cardRef: c.card >= 0 ? ((String(r[c.card] || '').match(/(\d{4})\D*$/) || [])[1] || '') : '', ...classifyRole(T + ' ' + norm(detail)) });
   });
   out.check = checkExtrato(out);
   return out;

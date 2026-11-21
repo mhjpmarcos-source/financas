@@ -80,6 +80,7 @@ export function newTx(f) {
   };
   if (f.type === 'trf') tx.toAccountId = f.toAccountId;
   if (f.comp) tx.comp = f.comp;
+  if (f.cardRef && f.type === 'cred') tx.cardRef = f.cardRef;
   if (f.seriesId) Object.assign(tx, { seriesId: f.seriesId, seriesIdx: f.seriesIdx, seriesN: f.seriesN, seriesKind: f.kind || 'rep' });
   return tx;
 }
@@ -350,6 +351,7 @@ export function projectParcels(S, base, key, i, n, cleanDesc) {
     if (S.deleted[id] || S.tx.some(t => t.id === id)) continue;
     const t = newTx({ type: 'cred', date: base.date, accountId: base.accountId, itemId: base.itemId, amount: base.amount, desc: `${cleanDesc} (${k}/${n})`, signed: true, origin: 'previsao' });
     Object.assign(t, { id, comp: advComp(S, base.accountId, base.comp, k - i), prev: true, parcKey: key, parcI: k, parcN: n });
+    if (base.cardRef) t.cardRef = base.cardRef; // parcela prevista é do mesmo portador da compra
     S.tx.push(t); c++;
   }
   return c;

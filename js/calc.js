@@ -110,15 +110,26 @@ export function balances(S, date, lq) {
    Desconto em folha contado como despesa (consignado, plano de saúde): entra nas despesas e, no mesmo valor, nas receitas,
    porque o salário foi lançado pelo líquido; assim o resultado continua igual ao que passou pela conta.
    Ajuste de valor de investimento (adj) fica de fora. */
+/* portador do cartão (ver holder.js): pelo final de 4 dígitos guardado na compra */
+export const cardRefOf = s => { const m = String(s || '').match(/(\d{4})\D*$/); return m ? m[1] : ''; };
+export function holderOf(S, t) {
+  if (!t || t.type !== 'cred' || !t.cardRef) return null;
+  const card = S.accounts.find(a => a.id === t.accountId), ref = cardRefOf(t.cardRef);
+  return ((card && card.holders) || []).find(h => h.ref === ref) || null;
+}
+/* compra de portador que devolve o dinheiro: não é despesa de quem paga a fatura (o reembolso também não é receita) */
+export const isThird = (S, t) => { const h = holderOf(S, t); return !!(h && h.reimb && !(h.since && txComp(S, t) < h.since)); };
+
 export function monthSummary(S, m) {
-  let rec = 0, desp = 0, folha = 0;
+  let rec = 0, desp = 0, folha = 0, terc = 0;
   S.tx.forEach(t => {
-    if (t.adj) return;
+    if (t.adj || t.reimb) return;
+    if (t.type === 'cred' && isThird(S, t)) { if (txComp(S, t) === m) terc += t.amount; return; }
     if (t.type === 'rec' && mOf(t.date) === m) rec += t.amount;
     else if (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) { desp += t.amount; if (t.folha) { rec += t.amount; folha += t.amount; } }
     else if (t.type === 'cred' && txComp(S, t) === m) desp += t.amount;
   });
-  return { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp), folha: r2(folha) };
+  return terc ? { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp), folha: r2(folha), terc: r2(terc) } : { rec: r2(rec), desp: r2(desp), saldo: r2(rec - desp), folha: r2(folha) };
 }
 
 /* dinheiro que foi para investimentos no mês: aportes − resgates (transferências entre conta comum e conta de investimento) */
@@ -188,7 +199,7 @@ export function faturaOf(S, cardId, comp) {
 export function byCategory(S, m, kind = 'despesa') {
   const groups = {};
   S.tx.forEach(t => {
-    if (t.adj) return;
+    if (t.adj || t.reimb || (t.type === 'cred' && isThird(S, t))) return;
     const isExp = (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) || (t.type === 'cred' && txComp(S, t) === m);
     const isFolha = isExp && t.folha; // desconto em folha: também soma na receita do salário (ver monthSummary)
     const isRec = t.type === 'rec' && mOf(t.date) === m;
@@ -265,7 +276,7 @@ export function detectRecurring(S, today = M.todayISO()) {
   const ign = new Set((S.config && S.config.recIgnore) || []);
   const groups = new Map();
   S.tx.forEach(t => {
-    if (!['deb', 'cred', 'rec'].includes(t.type) || t.cardPay || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.folha || t.adj || t.slipId || t.amount <= 0) return;
+    if (!['deb', 'cred', 'rec'].includes(t.type) || t.cardPay || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.folha || t.adj || t.slipId || t.reimb || t.amount <= 0) return;
     if (t.type !== 'cred' && t.status !== 'liq') return;
     const m = t.type === 'cred' ? txComp(S, t) : t.date.slice(0, 7);
     if (!months.includes(m)) return;

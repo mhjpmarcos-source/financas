@@ -12,8 +12,9 @@ import * as IP from './imp/plan.js';
 import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 import * as L from './link.js';
+import * as PH from './holder.js';
 
-export const VERSION = '0.10.2';
+export const VERSION = '0.11.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -403,9 +404,11 @@ function txRow(t, showDate, inFat) {
   const chips = (parc ? chip(`parcela ${parc[0]} de ${parc[1]}`, 'info') : t.seriesId ? chip(`${t.seriesIdx} de ${t.seriesN}`, 'info') : '')
     + (showDate && !inFat && t.type === 'cred' ? chip('fatura ' + shortM(C.txComp(S(), t)), 'info') : '')
     + (rk ? chip(rk.kind === 'var' ? 'todo mês · valor variável' : 'todo mês', 'info') : '')
+    + (() => { const h = PH.holderOf(S(), t); return h ? chip(esc(h.name) + (h.reimb ? ' · devolve' : ''), h.reimb ? 'who reimb' : 'who') : ''; })()
+    + (t.reimb ? chip('reembolso', 'who reimb') : '')
     + (t.folha ? chip('pago pela folha', 'info') : '') + (t.adj ? chip('ajuste de valor', 'info') : '')
     + (t.prev ? chip('previsto') : t.status === 'pend' && t.type !== 'cred' ? chip('pendente') : '')
-    + (!t.itemId && t.type !== 'trf' ? chip('sem categoria') : '');
+    + (!t.itemId && t.type !== 'trf' && !t.reimb ? chip('sem categoria') : '');
   return `<li data-tx="${t.id}" class="tx"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
     <span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small>${chips ? `<span class="chips">${chips}</span>` : ''}</span>
     <span class="num ${t.type === 'rec' || t.amount < 0 ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : t.amount < 0 ? '+' : '−'}${C.brl(Math.abs(t.amount))}</span></li>`;
@@ -458,7 +461,7 @@ function lancBody() {
     html += monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
-      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}</p>`;
+      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}${sum.terc ? ` ${C.brl(sum.terc)} em compras de quem devolve o dinheiro não contam como despesa sua.` : ''}</p>`;
     const rv = L.review(st);
     if (rv.n) html += `<button class="banner" id="rv-open"><span class="grow"><b>${rv.n} lançamento${rv.n > 1 ? 's' : ''} para conferir</b><small>${[rv.pay.length + rv.relink.length ? 'pagamento de fatura lançado como despesa' : '', rv.refund.length ? 'pix devolvido' : '', rv.nocat.length ? 'sem categoria' : ''].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">›</span></button>`;
     if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
@@ -540,7 +543,7 @@ function txSheet(tx, preset) {
       <label for="f-desc">Descrição</label><input id="f-desc" value="${esc(tx ? tx.desc : '')}" placeholder="Opcional">
       ${type === 'trf' ? `<label>De</label><select id="f-acc">${optAccounts('debito', accSel)}</select><label>Para</label><select id="f-to">${optAccounts('debito', tx && tx.toAccountId)}</select>`
         : `<label for="f-item">Categoria</label><select id="f-item"><option value="">Escolha…</option>${optItems(kind, tx && tx.itemId)}</select>
-           <label for="f-acc">${type === 'cred' ? 'Cartão' : 'Conta'}</label><select id="f-acc">${optAccounts(type === 'cred' ? 'credito' : 'debito', accSel)}</select>`}
+           <label for="f-acc">${type === 'cred' ? 'Cartão' : 'Conta'}</label><select id="f-acc">${optAccounts(type === 'cred' ? 'credito' : 'debito', accSel)}</select>${type === 'cred' ? '<div id="f-hbox"></div>' : ''}`}
       ${type === 'cred' ? '' : `<label class="check"><input type="checkbox" id="f-pend" ${tx && tx.status === 'pend' && !(preset && preset.payNow) ? 'checked' : ''}> Ainda não ${type === 'rec' ? 'recebido' : 'pago'} (pendente)</label>`}
       ${repeat}<p class="hint" id="f-prev"></p>${linkBox}
       <div class="actions">${tx ? '<button class="btn danger" id="f-del">Excluir</button>' : ''}<button class="btn" id="f-cancel">Cancelar</button><button class="btn primary" id="f-save">Salvar</button></div>`;
@@ -587,6 +590,13 @@ function txSheet(tx, preset) {
         : `${n} lançamentos de ${C.brl(v || 0)}, de ${shortM(d.slice(0, 7))} a ${shortM(C.mAdd(d.slice(0, 7), n - 1))}.`;
       h.textContent = txt;
     };
+    // quem usou o cartão (portadores cadastrados em Contas › cartão)
+    const fillHolders = () => {
+      const box = panel.querySelector('#f-hbox'); if (!box) return;
+      const card = accById(panel.querySelector('#f-acc').value), hs = PH.holdersOf(card), curRef = box.querySelector('#f-holder') ? box.querySelector('#f-holder').value : PH.refOf(tx && tx.cardRef);
+      box.innerHTML = hs.length ? `<label for="f-holder">Quem usou</label><select id="f-holder"><option value="">Não informado</option>${hs.map(h => `<option value="${h.ref}" ${h.ref === curRef ? 'selected' : ''}>${esc(PH.label(h))}${h.reimb ? ' (devolve)' : ''}</option>`).join('')}</select>` : '';
+    };
+    fillHolders(); if (panel.querySelector('#f-hbox')) panel.querySelector('#f-acc').addEventListener('change', fillHolders);
     panel.oninput = preview; panel.onchange = preview; preview();
     panel.querySelector('#f-cancel').onclick = closeSheet;
     if (tx) panel.querySelector('#f-del').onclick = async () => {
@@ -617,7 +627,8 @@ function txSheet(tx, preset) {
       if (type === 'trf' && (!toAccountId || toAccountId === accountId)) return toast('Escolha contas diferentes de origem e destino.', true);
       const status = type === 'cred' ? 'pend' : (panel.querySelector('#f-pend').checked ? 'pend' : 'liq');
       const desc = panel.querySelector('#f-desc').value.trim();
-      const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status, signed: type === 'cred' };
+      const hSel = panel.querySelector('#f-holder'), hRef = hSel ? hSel.value : '';
+      const fields = { type, amount, date, accountId, itemId, toAccountId, desc, status, signed: type === 'cred', cardRef: hRef || undefined };
       const n = nOf(), freq = freqOf();
       if ((freq === 'fixa' || freq === 'var') && amount < 0) return toast('Conta que se repete não pode ter valor negativo.', true);
       let scope = 'one';
@@ -633,7 +644,8 @@ function txSheet(tx, preset) {
           ['type', 'amount', 'date', 'accountId', 'itemId', 'desc', 'status'].forEach(k => { cur[k] = nw[k]; });
           if (type === 'trf') cur.toAccountId = toAccountId; else delete cur.toAccountId;
           if (cur.type !== 'cred') delete cur.comp;
-          else if (!(cur.seriesId || cur.parcKey) || tx.date !== date || tx.accountId !== accountId) delete cur.comp;
+          else if (tx.date !== date || tx.accountId !== accountId) delete cur.comp; // só muda de fatura se mudou a data ou o cartão (a fatura importada fica)
+          if (cur.type === 'cred' && hSel) { if (hRef) cur.cardRef = hRef; else if (PH.holderOf(s, cur)) delete cur.cardRef; }
           delete cur.prev; // valor conferido pela pessoa: não é mais previsão
           M.touch(cur);
         } else if (freq === 'fixa' || freq === 'var') {
@@ -647,7 +659,7 @@ function txSheet(tx, preset) {
         }
         else s.tx.push(M.newTx(fields));
       });
-      closeSheet(); render(); toast(tx ? (count > 1 ? `${count} lançamentos atualizados.` : 'Lançamento atualizado.') : (freq === 'fixa' || freq === 'var') ? 'Salvo. Os próximos meses estão em Agenda › Fixas e parcelas.' : (count > 1 ? `${count} lançamentos criados.` : 'Lançamento salvo.'));
+      keepRecurring(); closeSheet(); render(); toast(tx ? (count > 1 ? `${count} lançamentos atualizados.` : 'Lançamento atualizado.') : (freq === 'fixa' || freq === 'var') ? 'Salvo. Os próximos meses estão em Agenda › Fixas e parcelas.' : (count > 1 ? `${count} lançamentos criados.` : 'Lançamento salvo.'));
     };
   };
   openSheet('', draw);
@@ -817,7 +829,7 @@ function reviewSheet(stRaw, fileName, preset) {
         ${plan && !isCard && st.saldoIni != null && st.saldoIniDate && !(acc.initialDate === st.saldoIniDate && C.r2(acc.initial) === C.r2(st.saldoIni)) ? `<label class="check"><input type="checkbox" id="r-ini" ${plan.setInitial ? 'checked' : ''}> Usar o saldo anterior do extrato como saldo inicial da conta: <b>${C.brl(st.saldoIni)}</b> em ${C.fmtD(st.saldoIniDate)}/${st.saldoIniDate.slice(0, 4)}${acc.initialDate ? ` (hoje: ${C.brl(acc.initial)} em ${C.fmtD(acc.initialDate)})` : ` (hoje: ${C.brl(acc.initial)}, sem data)`}</label>` : ''}
         ${plan ? `<div class="seg small" id="r-filter">${[['new', 'Novos'], ['dup', 'Duplicatas'], ['ignored', 'Outros'], ['all', 'Todos']].map(([k, l]) => `<button data-f="${k}" aria-pressed="${filter === k}">${l} ${k === 'all' ? plan.rows.length : k === 'ignored' ? count('ignored') + count('already') : count(k)}</button>`).join('')}</div>
         <ul class="list irows">${rowsHTML || '<li class="empty">Nada aqui.</li>'}</ul>` : ''}
-        <div class="actions sticky"><button class="btn" id="r-cancel">Cancelar</button><button class="btn primary" id="r-go" ${sel.length || (plan && (plan.rows.some(r => r.status === 'cardpay' && r.include) || plan.alreadyPaid || plan.setInitial || (plan.project && plan.projN))) ? '' : 'disabled'}>${sel.length ? goLabel : plan && plan.project && plan.projN ? `Lançar ${plan.projN} parcelas previstas` : 'Aplicar'}</button></div>
+        <div class="actions sticky"><button class="btn" id="r-cancel">Cancelar</button><button class="btn primary" id="r-go" ${sel.length || (plan && (plan.rows.some(r => r.status === 'cardpay' && r.include) || plan.rows.some(r => r.fillRef) || plan.alreadyPaid || plan.setInitial || (plan.project && plan.projN))) ? '' : 'disabled'}>${sel.length ? goLabel : plan && plan.project && plan.projN ? `Lançar ${plan.projN} parcelas previstas` : 'Aplicar'}</button></div>
         ${!isCard && sel.length ? `<p class="hint center">Entradas ${C.brl(inSum)} · saídas ${C.brl(outSum)}</p>` : ''}
         ${noCat ? `<p class="hint center">${noCat} sem categoria: dá para escolher agora ou depois.</p>` : ''}`;
     };
@@ -848,7 +860,7 @@ function reviewSheet(stRaw, fileName, preset) {
         let res = null;
         const months = {}, prev0 = S().tx.filter(t => t.prev && t.parcKey).length;
         plan.rows.filter(r => r.include && r.tx).forEach(r => { const m = r.tx.comp || r.tx.date.slice(0, 7); months[m] = (months[m] || 0) + 1; });
-        await sync.commit(s => { res = IP.applyPlan(s, plan); });
+        await sync.commit(s => { res = IP.applyPlan(s, plan); PH.syncReimb(s); });
         const top = Object.entries(months).sort((a, b) => b[1] - a[1])[0];
         if (top) ui.month = top[0];
         closeSheet(); ui.tab = 'lanc'; ui.q = ''; render();
@@ -1301,6 +1313,7 @@ function linkSheet(tx, then) {
       ${rules.length ? pick('lk-rule', `É o mês de uma ${word} que se repete, já cadastrada`, rules.map(r => `<option value="${r.id}">${esc(r.desc)} · ${r.kind === 'var' ? '≈ ' : ''}${C.brl(M.recEstimate(st, r))} · dia ${r.day}</option>`).join(''), 'Vincular') : ''}
       ${opt('lk-new', `Criar uma ${word} que se repete a partir deste`, tx.type === 'rec' ? 'Salário, aluguel recebido, pensão… Este vira o primeiro mês e os próximos ficam previstos.' : 'Aluguel, condomínio, escola, assinatura… Este vira o primeiro mês e os próximos ficam previstos.')}
       ${parcels.length ? pick('lk-parc', tx.type === 'rec' ? 'É a parcela de algo que me devem' : 'É a parcela de uma dívida minha', parcels.map(o => `<option value="${o.tx.id}">${esc(o.tx.desc || o.loan.person)} · ${C.fmtD(o.tx.date)}/${o.tx.date.slice(2, 4)} · ${C.brl(o.tx.amount)}</option>`).join(''), 'Quitar') : ''}
+      ${tx.type === 'rec' && PH.reimbOptions(st, tx).length ? pick('lk-rb', 'É o reembolso de quem usa um cartão meu', PH.reimbOptions(st, tx).map(r => `<option value="${r.id}">${esc(r.desc)} · ${C.brl(r.amount)}</option>`).join(''), 'Vincular') : ''}
       ${others.length ? pick('lk-trf', tx.type === 'rec' ? 'É dinheiro meu que veio de outra conta' : 'É transferência para outra conta ou investimento', others.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join(''), 'Transferência') : ''}
       <div class="actions"><button class="btn" id="lk-c">Voltar</button></div>`;
     const q = id => panel.querySelector('#' + id);
@@ -1329,6 +1342,11 @@ function linkSheet(tx, then) {
     if (q('lk-parc-ok')) q('lk-parc-ok').onclick = async () => {
       let ok = false; await sync.commit(s => { ok = L.linkToParcel(s, tx.id, q('lk-parc').value); });
       ok ? done('Parcela quitada com este lançamento.') : toast('Não foi possível vincular.', true);
+    };
+    if (q('lk-rb-ok')) q('lk-rb-ok').onclick = async () => {
+      const r = S().tx.find(x => x.id === q('lk-rb').value), less = r && tx.amount < r.amount - 0.005;
+      let ok = false; await sync.commit(s => { ok = PH.linkReimb(s, tx.id, q('lk-rb').value); });
+      ok ? done(less ? `Reembolso vinculado. Faltam ${C.brl(r.amount - tx.amount)}, que continuam a receber.` : 'Reembolso vinculado.') : toast('Não foi possível vincular.', true);
     };
     if (q('lk-trf-ok')) q('lk-trf-ok').onclick = async () => {
       let ok = false; await sync.commit(s => { ok = L.toTransfer(s, tx.id, q('lk-trf').value); });
@@ -1420,6 +1438,7 @@ function pageResumo() {
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
     <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha.` : ''}</p>
     ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
+    ${(() => { const mh = PH.monthByHolder(st, m); return mh.length ? `<div class="card"><h2>Por quem usou o cartão</h2><ul class="list calc">${mh.map(o => `<li><span class="grow">${esc(PH.label(o.h))} <small class="hint">${esc(o.card.name)} · ${o.n} compra${o.n > 1 ? 's' : ''}</small>${o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : ''}</span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>${sum.terc ? `<p class="hint">${C.brl(sum.terc)} de quem devolve o dinheiro ficam fora das suas despesas; o reembolso também não conta como receita.</p>` : ''}</div>` : ''; })()}
     <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1)}</div>
     <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
       <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
@@ -1893,10 +1912,10 @@ async function ignoreSuggestion(x) {
 /* cria os meses que faltam das contas que se repetem (ao abrir e quando chegam dados de outro aparelho) */
 let recBusy = false;
 async function keepRecurring() {
-  const st = S(); if (recBusy || !st || !st.config.setupDone || !((st.rec || []).length || (st.jobs || []).length)) return;
-  if (!H.maintain(st, M.todayISO(), true)) return;
+  const st = S(); if (recBusy || !st || !st.config.setupDone) return;
+  if (!H.maintain(st, M.todayISO(), true) && !PH.syncReimb(st, M.todayISO(), true)) return;
   recBusy = true;
-  try { await sync.commit(s => { H.maintain(s); }); } finally { recBusy = false; }
+  try { await sync.commit(s => { H.maintain(s); PH.syncReimb(s); }); } finally { recBusy = false; }
 }
 
 /* ----- pessoas e Pix ----- */
@@ -2028,6 +2047,7 @@ function faturaSheet(cardId, comp) {
       <div class="month"><button data-c="-1" aria-label="Fatura anterior">‹</button><b>Fatura de ${C.monthLabel(comp).toLowerCase()}</b><button data-c="1" aria-label="Próxima fatura">›</button></div>
       <div class="kpis two"><div class="kpi"><small>Total</small><b class="num">${C.brl(f.total)}</b></div><div class="kpi"><small>Vencimento</small><b>${C.fmtD(f.date)}/${f.date.slice(0, 4)}</b></div></div>
       <p class="hint">${stTxt} · paga pela conta ${esc((accById(f.accountId) || {}).name || '—')}.</p>
+      ${(() => { const bh = PH.byHolder(S(), cardId, comp); return bh.length > 1 || (bh[0] && bh[0].h) ? `<h3 class="sub">Por cartão</h3><ul class="list calc">${bh.map(o => `<li><span class="grow">${o.h ? esc(PH.label(o.h)) + (o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : '') : 'Sem cartão cadastrado'} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>` : ''; })()}
       ${f.payments.length ? `<h3 class="sub">Pagamentos</h3><ul class="list">${f.payments.map(t => txRow(t, true)).join('')}</ul>` : ''}
       ${f.list.length ? `<h3 class="sub">Compras</h3><ul class="list">${f.list.map(t => txRow(t, true, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
       <div class="actions wrap"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-imp">Importar</button>
@@ -2060,6 +2080,63 @@ function faturaSheet(cardId, comp) {
   });
 }
 
+/* portadores do cartão: titular, adicionais e virtuais, e quem devolve o dinheiro */
+function holderSheet(cardId, edit) {
+  const st = S(), card = accById(cardId); if (!card) return;
+  const hs = PH.holdersOf(card), unk = PH.unknownRefs(st, cardId), cm = M.skipComp(st, cardId, C.cardCycle(card, M.todayISO()).comp);
+  const h = edit === undefined ? null : edit === '' ? { ref: '', name: '', kind: 'adicional', reimb: false } : (hs.find(x => x.ref === edit) || { ref: edit, name: '', kind: 'adicional', reimb: false });
+  const months = Array.from({ length: 13 }, (_, i) => C.mAdd(cm, i - 12)).reverse();
+  openSheet('', panel => {
+    panel.innerHTML = h ? `<h2>${h.name ? esc(h.name) : 'Novo cartão de ' + esc(card.name)}</h2>
+      <div class="grid2"><div><label for="h-ref">Final do cartão</label><input id="h-ref" inputmode="numeric" maxlength="4" value="${esc(h.ref)}" placeholder="0000"></div>
+        <div><label for="h-kind">Tipo</label><select id="h-kind">${Object.keys(PH.KIND).map(k => `<option value="${k}" ${k === h.kind ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></div></div>
+      <label for="h-name">Quem usa</label><input id="h-name" value="${esc(h.name)}" placeholder="Nome">
+      <div class="seg small" id="h-reimb" style="margin-top:12px"><button type="button" data-r="0" aria-pressed="${!h.reimb}">É despesa minha</button><button type="button" data-r="1" aria-pressed="${!!h.reimb}">A pessoa me devolve</button></div>
+      <p class="hint" id="h-hint"></p>
+      <div id="h-sincebox"><label for="h-since">Cobrar a partir da fatura de</label><select id="h-since">${months.map(m => `<option value="${m}" ${m === (h.since || cm) ? 'selected' : ''}>${C.monthLabel(m)}</option>`).join('')}</select></div>
+      <div class="actions">${hs.some(x => x.ref === h.ref) ? '<button class="btn danger" id="h-del">Excluir</button>' : ''}<button class="btn" id="h-back">Voltar</button><button class="btn primary" id="h-ok">Salvar</button></div>`
+    : `<h2>Quem usa o ${esc(card.name)}</h2>
+      <p class="hint">Cada compra da fatura vem com o final do cartão (titular, adicional ou virtual). Cadastrado o final, a compra ganha a marca de quem usou, além da categoria. Se a pessoa devolve o dinheiro, as compras dela saem das suas despesas e o app cria um "a receber" para cada fatura.</p>
+      ${hs.length ? `<ul class="list wrap">${hs.map(x => `<li data-h="${x.ref}"><span class="t"><b>${esc(x.name)}</b><small>${x.kind} · final ${x.ref} · ${x.reimb ? 'devolve o dinheiro' + (x.since ? ' desde a fatura de ' + shortM(x.since) : '') : 'despesa sua'}</small></span><span aria-hidden="true">›</span></li>`).join('')}</ul>` : ''}
+      ${unk.length ? `<h3 class="sub">Finais encontrados nas faturas, sem cadastro</h3><ul class="list">${unk.map(x => `<li data-h="${x.ref}" data-new="1"><span class="t"><b>Final ${x.ref}</b><small>${x.count} compra${x.count > 1 ? 's' : ''}</small></span><span class="link">Cadastrar</span></li>`).join('')}</ul>` : ''}
+      <button class="btn block" id="h-new">+ Cartão de outra pessoa ou virtual</button>
+      <div class="actions"><button class="btn" id="h-close">Fechar</button></div>`;
+    if (!h) {
+      panel.onclick = e => {
+        const li = e.target.closest('[data-h]'); if (li) return holderSheet(cardId, li.dataset.h);
+        if (e.target.id === 'h-new') return holderSheet(cardId, '');
+        if (e.target.id === 'h-close') return accSheet(accById(cardId));
+      };
+      return;
+    }
+    let reimb = !!h.reimb;
+    const upd = () => {
+      panel.querySelectorAll('#h-reimb [data-r]').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.r === '1') === reimb)));
+      panel.querySelector('#h-sincebox').hidden = !reimb;
+      panel.querySelector('#h-hint').textContent = reimb ? 'As compras deste cartão não entram nas suas despesas. Para cada fatura, o valor que a pessoa gastou fica "a receber" na Agenda, no dia do vencimento. Quando o Pix dela chegar, abra o lançamento e toque em "Vincular a…".'
+        : 'As compras deste cartão contam como despesa sua, com a categoria de cada uma, e ganham a marca de quem usou.';
+    };
+    upd();
+    panel.querySelector('#h-reimb').onclick = e => { const b = e.target.closest('[data-r]'); if (b) { reimb = b.dataset.r === '1'; upd(); } };
+    panel.querySelector('#h-back').onclick = () => holderSheet(cardId);
+    if (panel.querySelector('#h-del')) panel.querySelector('#h-del').onclick = async () => {
+      if (!(await confirmBox(`Excluir ${h.name} (final ${h.ref})? As compras continuam, só sem a marca de quem usou.${h.reimb ? ' Os "a receber" em aberto são apagados.' : ''}`))) return;
+      await sync.commit(s2 => PH.removeHolder(s2, cardId, h.ref)); render(); holderSheet(cardId);
+    };
+    panel.querySelector('#h-ok').onclick = async () => {
+      const ref = PH.refOf(panel.querySelector('#h-ref').value), name = panel.querySelector('#h-name').value.trim();
+      if (!ref) return toast('Informe os 4 últimos números do cartão.', true);
+      if (!name) return toast('Informe quem usa.', true);
+      const old = hs.some(x => x.ref === h.ref) ? h.ref : '';
+      let nh = null;
+      await sync.commit(s2 => { nh = PH.setHolder(s2, cardId, { ref, name, kind: panel.querySelector('#h-kind').value, reimb, since: reimb ? panel.querySelector('#h-since').value : undefined }, old); });
+      const n = S().tx.filter(t => t.type === 'cred' && t.accountId === cardId && PH.refOf(t.cardRef) === ref).length;
+      render(); toast(`Salvo: ${n} compra${n === 1 ? '' : 's'} marcada${n === 1 ? '' : 's'} com ${name}.${nh && nh.reimb ? ' O "a receber" está na Agenda.' : ''}`);
+      holderSheet(cardId);
+    };
+  });
+}
+
 function accSheet(acc, nature) {
   const invNew = !acc && nature === 'inv';
   nature = acc ? acc.nature : invNew ? 'debito' : nature;
@@ -2072,7 +2149,8 @@ function accSheet(acc, nature) {
       <label for="a-name">Nome</label><input id="a-name" value="${esc(acc ? acc.name : '')}" ${isInv && !acc ? 'placeholder="Ex.: Tesouro, CDB, corretora"' : ''}>
       ${credit ? `<div class="grid2"><div><label>Fecha no dia</label><input id="a-close" inputmode="numeric" value="${acc ? acc.closeDay : ''}"></div>
         <div><label>Vence no dia</label><input id="a-due" inputmode="numeric" value="${acc ? acc.dueDay : ''}"></div></div>
-        <label>Fatura paga pela conta</label><select id="a-pay">${optAccounts('debito', acc && acc.payAccount)}</select>`
+        <label>Fatura paga pela conta</label><select id="a-pay">${optAccounts('debito', acc && acc.payAccount)}</select>
+        ${acc ? `<button type="button" class="opt" id="a-holders"><b>Quem usa este cartão${PH.holdersOf(acc).length ? ` (${PH.holdersOf(acc).length})` : ''}</b><small>${PH.holdersOf(acc).length ? PH.holdersOf(acc).map(h => esc(h.name) + ' ' + h.ref + (h.reimb ? ' (devolve)' : '')).join(' · ') : 'Titular, adicional e virtual: o app marca cada compra com quem usou e, se a pessoa devolve o dinheiro, cria o "a receber".'}${PH.unknownRefs(S(), acc.id).length ? ` · finais sem cadastro: ${PH.unknownRefs(S(), acc.id).map(x => x.ref).join(', ')}` : ''}</small></button>` : ''}`
         : `<div class="grid2"><div><label for="a-ini">${isInv ? 'Valor aplicado (R$)' : 'Saldo inicial (R$)'}</label><div class="pm"><input id="a-ini" inputmode="decimal" value="${acc ? moneyText(acc.initial) : ''}" placeholder="0,00"><button type="button" class="pmb" data-pm aria-label="Trocar sinal (positivo ou negativo)">±</button></div></div>
            <div><label for="a-inid">No fim do dia</label><input id="a-inid" type="date" value="${acc && acc.initialDate ? acc.initialDate : (acc ? '' : yesterday())}"></div></div>
            <p class="hint">Lançamentos até essa data já estão dentro do saldo inicial e não mudam o saldo. Sem data, todos os lançamentos contam.</p>
@@ -2081,6 +2159,7 @@ function accSheet(acc, nature) {
       ${acc ? '<p class="hint">Arquivar esconde das listas, mas mantém os lançamentos antigos.</p>' : ''}`;
     panel.querySelector('#a-cancel').onclick = closeSheet;
     if (panel.querySelector('#a-yield')) panel.querySelector('#a-yield').onclick = () => yieldSheet(acc);
+    if (panel.querySelector('#a-holders')) panel.querySelector('#a-holders').onclick = () => holderSheet(acc.id);
     if (acc) panel.querySelector('#a-off').onclick = async () => {
       const on = acc.active === false;
       if (!on && !(await confirmBox(`Arquivar ${acc.name}?`))) return;

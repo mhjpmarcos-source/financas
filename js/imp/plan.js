@@ -41,6 +41,9 @@ export function buildPlan(S, st, { accountId, comp }) {
       return key;
     };
     if (existingKeys.has(impKey)) {
+      // já importada sem o final do cartão (arquivo antigo): o novo arquivo completa o portador
+      const old = l.cardRef && S.tx.find(t => t.impKey === impKey);
+      if (old && !old.cardRef) row.fillRef = l.cardRef;
       row.status = 'already'; row.reason = 'Já importado antes';
       // importada antes da versão 0.8: a compra parcelada ganha agora as parcelas futuras previstas
       if (isCard && l.parc && l.dir !== 'in') { parcInfo(); row.base = S.tx.find(t => t.impKey === impKey); }
@@ -215,6 +218,7 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
     }
   });
   // fatura importada que já foi paga (antes de começar a usar o app, ou paga por fora)
+  plan.rows.forEach(r => { if (r.fillRef) { const x = S.tx.find(t => t.impKey === r.tx.impKey); if (x && !x.cardRef) { x.cardRef = r.fillRef; M.touch(x); S.tx.filter(y => y.parcKey && y.parcKey === x.parcKey && y.prev && !y.cardRef).forEach(y => { y.cardRef = r.fillRef; M.touch(y); }); created++; } } });
   if (plan.isCard) M.realignParcels(S, plan.accountId); // parcela real que chegou numa fatura depois da prevista: as seguintes acompanham
   if (plan.isCard && plan.alreadyPaid && plan.comp) {
     const key = plan.accountId + '|' + plan.comp;
