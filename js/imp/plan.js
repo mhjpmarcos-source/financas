@@ -88,6 +88,8 @@ export function buildPlan(S, st, { accountId, comp }) {
     row.itemId = c.itemId; row.how = c.how; row.key = c.key;
     row.status = 'new'; row.include = true;
     row.recOptions = recOptions(S, row.tx, isCard); // contas que se repetem que esta linha pode estar pagando (vínculo à mão)
+    const mv = findMoved(S, row.tx, l, used, c.key); // a mesma conta fixa, que estava em outro cartão ou outra conta
+    if (mv) { used.add(mv.x.id); row.moveOpt = { id: mv.x.id, recId: mv.r.id, desc: mv.r.desc, from: mv.r.accountId, fromType: mv.r.type, amount: Math.abs(mv.x.amount), recM: mv.x.recM }; row.move = mv.strong; }
     return row;
     function prevRow(r, x, reason) { used.add(x.id); r.status = 'prev'; r.match = x; r.reason = reason; r.include = true; r.itemId = x.itemId; variation(S, r); return r; }
   });
@@ -112,6 +114,29 @@ export function setRowRec(S, plan, row, txId) {
   const x = txId && S.tx.find(t => t.id === txId && t.prev);
   if (x) { Object.assign(row, { status: 'prev', match: x, reason: 'Vinculado por você', linked: true, include: true, itemId: x.itemId }); variation(S, row); }
   else { Object.assign(row, { status: 'new', match: null, reason: '', linked: false, include: true }); variation(S, row); }
+}
+
+/* A linha é uma conta que se repete cadastrada em OUTRO lugar (a assinatura trocou de cartão, ou passou do cartão para o Pix)?
+   Procura um mês ainda previsto, perto da data, de regra de outra conta com o mesmo nome no banco (ou palavras em comum) e valor
+   compatível. Não vincula sozinho: vira uma pergunta na revisão, já marcada só quando o nome é conhecido ou o valor é igual. */
+function findMoved(S, t, l, used, lineKey) {
+  if (t.type === 'trf') return null;
+  const amt = Math.abs(t.amount), words = s => new Set(M.normDesc(s).split(' ').filter(w => w.length >= 4 && !/^\d+$/.test(w)));
+  const lw = words(l.desc + ' ' + (l.title || '') + ' ' + (l.detail || ''));
+  let best = null;
+  for (const x of S.tx) {
+    if (!x.prev || !x.recId || used.has(x.id) || x.accountId === t.accountId || (x.type === 'rec') !== (t.type === 'rec') || x.type === 'trf') continue;
+    const r = (S.rec || []).find(y => y.id === x.recId); if (!r) continue;
+    const dd = days(x.date, t.date); if (dd > 40) continue;
+    const xa = Math.abs(x.amount), known = !!(lineKey && (r.keys || []).includes(lineKey));
+    const rw = words(r.desc + ' ' + (r.words || '')), common = [...lw].filter(w => rw.has(w)).length;
+    if (!known && !common) continue;
+    const exact = Math.abs(xa - amt) <= Math.max(0.5, amt * 0.03);
+    if (!(r.kind === 'fixa' ? Math.abs(xa - amt) <= amt * 0.25 : amt >= xa * 0.4 && amt <= xa * 2.5)) continue;
+    const score = dd + (known ? -100 : 0) + (exact ? -50 : 0) - common;
+    if (!best || score < best.score) best = { x, r, score, strong: known || exact };
+  }
+  return best;
 }
 
 /* lançamento previsto (parcela futura ou mês de conta que se repete) que esta linha confirma */
@@ -185,6 +210,11 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
     }
     if (r.status === 'cardpay' && r.include) { r.tx.faturaKey = r.fatura ? r.fatura.key : ''; if (r.fatura) paid++; }
     if (!r.include || !r.tx) return;
+    if (r.status === 'new' && r.move && r.moveOpt) {
+      // a conta fixa mudou de cartão ou de conta: a regra e os meses em aberto vêm para cá, e esta linha confirma o mês
+      const x0 = S.tx.find(y => y.id === r.moveOpt.id && y.prev), rr0 = x0 && (S.rec || []).find(y => y.id === x0.recId);
+      if (x0 && rr0) { M.moveRec(S, rr0, r.tx.accountId, r.tx.type, x0.recM); r.status = 'prev'; r.match = x0; r.moved = true; }
+    }
     if (r.status === 'prev') {
       // a linha confirma o previsto: o lançamento existente passa a ter os dados reais (sem criar outro)
       const x = S.tx.find(y => y.id === r.match.id); if (!x) return;
@@ -192,6 +222,7 @@ export function applyPlan(S, plan, { markPaid = true } = {}) {
       if (r.tx.type !== 'cred') x.status = 'liq'; else x.comp = r.tx.comp;
       if (x.parcKey) x.desc = r.tx.desc;
       ['impKey', 'rawDesc', 'doc', 'cardRef'].forEach(k => { if (r.tx[k]) x[k] = r.tx[k]; });
+      if (x.recId && !x.rawDesc && r.line && r.line.desc && r.line.desc !== x.desc) x.rawDesc = r.line.desc; // o nome da conta é o que a pessoa escolheu; o do banco fica guardado
       if (x.recId) {
         const rr = (S.rec || []).find(y => y.id === x.recId);
         if (rr) {

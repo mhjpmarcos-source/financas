@@ -299,6 +299,25 @@ export function editRec(S, r, f, fromM) {
   });
   return n;
 }
+/* a conta que se repete mudou de lugar a partir de fromM: outro cartão, outra conta, ou do cartão para o Pix/débito (e vice-versa).
+   A regra passa para o novo lugar e os meses ainda em aberto vão junto; o que já foi pago fica onde foi pago. */
+export function moveRec(S, r, accountId, type, fromM) {
+  r.accountId = accountId;
+  if (type && type !== 'trf' && (r.type === 'rec') === (type === 'rec')) r.type = type;
+  touch(r);
+  let n = 0;
+  recOccs(S, r).filter(t => t.recM >= fromM && pendOpen(t)).forEach(t => {
+    t.accountId = accountId; t.type = r.type; t.date = dayIn(t.recM, r.day); t.prev = true; t.status = 'pend'; delete t.comp; touch(t); n++;
+  });
+  return n;
+}
+/* novo nome para a conta que se repete: vale também para os meses já lançados; o nome que veio do banco fica guardado em rawDesc
+   (aparece ao abrir o lançamento e continua valendo para a busca e para reconhecer as próximas importações) */
+export function renameRecHistory(S, r, desc) {
+  let n = 0;
+  recOccs(S, r).forEach(t => { if (t.desc === desc) return; if (!t.rawDesc && t.origin === 'import') t.rawDesc = t.desc; t.desc = desc; touch(t); n++; });
+  return n;
+}
 /* encerra: o último mês é endM; os meses seguintes ainda em aberto são apagados */
 export function endRec(S, r, endM) {
   r.end = endM; touch(r);

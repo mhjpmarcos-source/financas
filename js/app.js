@@ -15,7 +15,7 @@ import * as L from './link.js';
 import * as PH from './holder.js';
 import { TOUR, GUIDE } from './help.js';
 
-export const VERSION = '0.14.0';
+export const VERSION = '0.14.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -901,6 +901,8 @@ function reviewSheet(stRaw, fileName, preset) {
           + (r.status === 'new' ? `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>` : '');
         else if (r.status === 'new') body = `<select data-cat="${r.idx}" class="${r.itemId ? '' : 'missing'}"><option value="">Sem categoria</option>${optItems(r.tx.type === 'rec' ? 'receita' : 'despesa', r.itemId)}</select>${r.how && r.how !== 'escolhida' ? `<small class="hint">sugerida por ${r.how}</small>` : ''}`;
         if (r.status === 'new' && (r.recOptions || []).some(o => !taken.has(o.id))) body += `<select data-rec="${r.idx}" aria-label="Vincular a uma conta que se repete"><option value="">Não é uma conta fixa cadastrada</option>${r.recOptions.filter(o => !taken.has(o.id)).map(o => `<option value="${o.id}">É o pagamento de: ${esc(o.desc)} · ${shortM(o.recM || o.date.slice(0, 7))} · previsto ${C.brl(o.amount)}</option>`).join('')}</select>`;
+        if (r.status === 'new' && r.moveOpt) { const o = r.moveOpt, fromA = accById(o.from), toA = accById(r.tx.accountId), kindTo = r.tx.type === 'cred' ? 'cartão' : 'conta';
+          body += `<label class="check fixf"><input type="checkbox" data-move="${r.idx}" ${r.move ? 'checked' : ''}> <span>É <b>${esc(o.desc)}</b> (previsto ${C.brl(o.amount)} em ${esc(fromA ? fromA.name : 'outra conta')})? Passar esta conta fixa para ${kindTo === 'cartão' ? 'o cartão' : 'a conta'} <b>${esc(toA ? toA.name : '')}</b> daqui em diante${o.fromType !== r.tx.type ? (r.tx.type === 'cred' ? ', agora no cartão' : ', agora fora do cartão') : ''}.</span></label>`; }
         if (r.status === 'prev') body = `<p class="hint">✓ ${esc(r.reason)}: <b>${esc(r.match.desc)}</b>, previsto ${C.brl(Math.abs(r.match.amount))}. O lançamento previsto passa a ter o valor real, sem duplicar.${r.linked ? ' Nas próximas importações o app reconhece este nome sozinho.' : ''}</p>`
           + (r.newAmount ? `<label class="check fixf"><input type="checkbox" data-fixf="${r.idx}" ${r.fixFuture ? 'checked' : ''}> <span>O valor mudou de ${C.brl(r.oldAmount)} para <b>${C.brl(r.newAmount)}</b>: usar o novo valor como previsto dos próximos meses</span></label>` : '')
           + (r.linked ? `<button type="button" class="link" data-unrec="${r.idx}">Desfazer o vínculo</button>` : '');
@@ -938,6 +940,7 @@ function reviewSheet(stRaw, fileName, preset) {
       if (e.target.dataset.inv) { IP.setRowInv(plan, plan.rows[+e.target.dataset.inv], e.target.value); return draw(); }
       if (e.target.dataset.rec) { IP.setRowRec(S(), plan, plan.rows[+e.target.dataset.rec], e.target.value); return draw(); }
       if (e.target.dataset.fixf) { plan.rows[+e.target.dataset.fixf].fixFuture = e.target.checked; return; }
+      if (e.target.dataset.move) { plan.rows[+e.target.dataset.move].move = e.target.checked; return; }
       if (e.target.id === 'r-paid') { plan.alreadyPaid = e.target.checked; return; }
       if (e.target.id === 'r-proj') { plan.project = e.target.checked; return draw(); }
       if (e.target.id === 'r-ini') { plan.setInitial = e.target.checked ? { value: st.saldoIni, date: st.saldoIniDate } : null; return draw(); }
@@ -1989,6 +1992,7 @@ function recSheet(id) {
         Desde ${shortM(r.start)}${r.end ? `, ${ended ? 'encerrada em' : 'até'} ${shortM(r.end)}` : ', sem data para acabar'}.</p>
       ${(r.keys || []).length ? `<p class="hint">No extrato, é reconhecida por: <b>${r.keys.map(esc).join('</b>, <b>')}</b>. <button type="button" class="link" id="rc-forget">Esquecer</button></p>` : `<p class="hint">Para o app reconhecer sozinho no extrato: ao importar, escolha esta conta na linha do ${r.type === 'rec' ? 'crédito' : 'pagamento'}; ou abra um lançamento já importado e toque em "Vincular a…". O app guarda o nome que o banco usa, mesmo quando o valor muda.</p>`}
       <label for="rc-desc">Descrição</label><input id="rc-desc" value="${esc(r.desc)}">
+      <p class="hint">Pode dar o nome que quiser: o app continua reconhecendo pelo nome que vem do banco, que fica guardado em cada lançamento.</p>
       <div class="seg small" id="rc-kind"><button type="button" data-k="fixa" aria-pressed="${r.kind === 'fixa'}">Fixa</button><button type="button" data-k="var" aria-pressed="${r.kind === 'var'}">Valor variável</button></div>
       <div class="grid2"><div><label for="rc-val" id="rc-vallbl">${r.kind === 'var' ? 'Estimativa (R$)' : 'Valor (R$)'}</label><input id="rc-val" inputmode="decimal" value="${moneyText(r.amount)}"></div>
         <div><label for="rc-day">Dia do mês</label><input id="rc-day" type="number" inputmode="numeric" min="1" max="31" value="${r.day}"></div></div>
@@ -2007,7 +2011,9 @@ function recSheet(id) {
       if (panel.querySelector('#rc-person')) f.person = panel.querySelector('#rc-person').value;
       if (!(f.amount > 0)) return toast('Informe um valor maior que zero.', true);
       let n = 0;
-      await sync.commit(s => { const x = s.rec.find(y => y.id === id); if (x) { n = M.editRec(s, x, f, cm); M.ensureRecurring(s); } });
+      await sync.commit(s => { const x = s.rec.find(y => y.id === id); if (x) {
+        const renamed = f.desc !== x.desc; if (renamed && !x.words) x.words = M.normDesc(x.desc); // o nome antigo continua valendo para reconhecer as importações
+        n = M.editRec(s, x, f, cm); if (renamed) M.renameRecHistory(s, x, f.desc); M.ensureRecurring(s); } });
       closeSheet(); render(); toast(n ? `Salvo. ${n} mês(es) em aberto atualizados.` : 'Salvo.');
     };
     if (panel.querySelector('#rc-end')) panel.querySelector('#rc-end').onclick = async () => {

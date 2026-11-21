@@ -228,7 +228,7 @@ export function search(S, q) {
   const num = parseMoney(q);
   return S.tx.filter(t => {
     const it = S.items.find(i => i.id === t.itemId), acc = S.accounts.find(a => a.id === t.accountId);
-    const hay = norm([t.desc, it && it.name, acc && acc.name, String(t.amount).replace('.', ',')].join(' '));
+    const hay = norm([t.desc, t.rawDesc, it && it.name, acc && acc.name, String(t.amount).replace('.', ',')].join(' '));
     return words.every(w => hay.includes(w)) || (num > 0 && Math.abs(t.amount - num) < 0.005);
   }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 200);
 }
