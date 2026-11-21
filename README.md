@@ -7,7 +7,8 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.14.1.** Novidades:
+**Versão atual: 0.15.0.** Novidades:
+- **0.15.0:** **formas de pagamento e tipos de Pix** no lançamento (Pix, agendado, agendado recorrente, Automático, parcelado, no crédito, boleto, débito, débito automático, dinheiro, TED): cada uma se comporta como no banco (agendado fica pendente; recorrente e Automático viram conta que se repete; parcelado debita as parcelas da conta; no crédito vai para a fatura do cartão). Sem escolha, o app deduz pelo nome que vem do banco. Marca na lista, filtro por forma de pagamento e "Despesas por forma de pagamento" no Resumo. **Outro aparelho**: quem já tem dados entra direto neles, sem passar pela configuração inicial. **Segurança**: o app não abre embutido em outra página, a planilha exportada não deixa texto virar fórmula e as cores vindas do arquivo de dados são validadas (ver "Segurança" abaixo).
 - **0.14.1:** **conta fixa que muda de lugar**: quando a assinatura (ou outra conta que se repete) aparece na fatura de outro cartão, ou passa a ser paga por Pix/débito, a revisão da importação pergunta "É <conta>? Passar esta conta fixa para cá"; aceitando, a regra e os meses previstos mudam de cartão ou de conta e nada fica em dobro. **Nome à sua escolha**: renomear uma conta que se repete vale também para os meses já lançados; o nome que vem do banco fica guardado em cada lançamento, continua reconhecendo as próximas importações e é achado pela busca.
 - **0.14.0:** **Futuro** (Resumo › Futuro): para cada um dos próximos 12 meses, a renda prevista e quanto dela já tem destino (descontos em folha, contas fixas e assinaturas, contas variáveis, parcelas e dívidas), com o percentual, a sobra e o que termina em cada mês. **Assinaturas no cartão**: em Agenda › Fixas e parcelas, o app pergunta "É assinatura?" para compras que se repetem em duas faturas seguidas ou têm nome de serviço conhecido; confirmando, viram conta fixa no cartão. **Tutorial de primeiro uso** (também em Ajustes › Ajuda), **guia de uso** em perguntas e respostas e **política de privacidade** (`privacidade.html`). Ao puxar a tela no iPhone, o fundo é da cor do topo.
 - **0.13.1:** **Maré** passa a ser o estilo padrão (Mata e Ameixa continuam em Ajustes › Aparência) e o ícone ganha as cores dele; ao puxar a tela para baixo no iPhone, o fundo que aparece é da cor do topo.
@@ -109,6 +110,15 @@ Três etapas gratuitas, uns 20 minutos.
 Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o ID na tela (vale só para aquele aparelho).
 
 ---
+
+## Segurança e privacidade, em resumo
+
+- **Sem servidor.** O app é um conjunto de arquivos estáticos. Os dados de cada pessoa ficam no Drive dela e no aparelho dela; quem publica o app não recebe nada.
+- **Permissão mínima no Google** (`drive.file`): o app só alcança os arquivos que ele mesmo criou no Drive de quem entrou. O acesso dura cerca de 1 hora e fica guardado só no aparelho.
+- **Uma pessoa não alcança os dados de outra**: não existe base comum; cada conta Google fala só com o próprio Drive.
+- **Política de conteúdo (CSP)**: o navegador só executa scripts do próprio site e do login do Google, e só conversa com as APIs do Google. O app não funciona embutido em outra página.
+- **No aparelho**: a cópia local não é criptografada; o PIN e o Face ID são uma tranca de tela. Em aparelho compartilhado, use "Remover dados deste aparelho" ao sair.
+- **Confiança em quem publica**: como em qualquer site, quem controla o repositório controla o código que roda. O código é público para poder ser conferido; a conta do GitHub que publica deve ter verificação em duas etapas. Não publique outros sites no mesmo endereço `usuario.github.io`: eles dividiriam o mesmo armazenamento do navegador.
 
 ## Para quem mexe no código
 

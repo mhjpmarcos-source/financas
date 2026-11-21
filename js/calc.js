@@ -364,7 +364,8 @@ export function yearTable(S, year) {
 }
 
 /* ---------- exportação ---------- */
-const csvCell = v => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+/* texto que começa com = + - @ viraria fórmula ao abrir no Excel (o nome vem do banco ou de quem digitou): ganha um apóstrofo na frente */
+const csvCell = v => { let s = String(v ?? ''); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s) && !/^-?\d[\d.,]*$/.test(s)) s = "'" + s; return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 const csvNum = v => (Math.round(v * 100) / 100).toFixed(2).replace('.', ',');
 export function toCsv(rows) { return '\uFEFF' + rows.map(r => r.map(csvCell).join(';')).join('\r\n') + '\r\n'; }
 
@@ -482,4 +483,42 @@ export function committed(S, from, n = 12) {
     const parts = Object.fromEntries(Object.entries(R.parts).map(([k, v]) => [k, r2(v)])), total = r2(Object.values(parts).reduce((s, x) => s + x, 0)), renda = r2(R.renda);
     return { m: R.m, renda, parts, total, sobra: r2(renda - total), pct: renda > 0 ? Math.round(total / renda * 100) : null, ends: R.ends.sort((a, b) => b.amount - a.amount) };
   });
+}
+
+/* ----- forma de pagamento -----
+   Tipos de Pix e as outras formas. Fica em t.pay quando a pessoa escolhe; sem escolha, é deduzida da descrição que veio do banco
+   (ou da conta que se repete). Como cada Pix se comporta no app:
+   pix      sai da conta na hora (ou entra, no Pix recebido)
+   pixag    agendado: fica pendente na conta até a data
+   pixrec   agendado recorrente (você agenda no banco, valor fixo): conta que se repete, na conta
+   pixauto  Pix Automático (a empresa cobra, você autorizou): conta que se repete, na conta, valor fixo ou variável
+   pixparc  parcelado pelo banco: quem recebe ganha à vista; as parcelas (com juros) saem da conta mês a mês
+   pixcred  Pix no crédito: entra na fatura do cartão, à vista ou parcelado; não sai da conta na hora */
+export const PAY = [['pix', 'Pix'], ['pixag', 'Pix agendado'], ['pixrec', 'Pix agendado recorrente'], ['pixauto', 'Pix Automático'], ['pixparc', 'Pix parcelado'], ['pixcred', 'Pix no crédito'],
+  ['boleto', 'Boleto'], ['debito', 'Cartão de débito'], ['debauto', 'Débito automático'], ['dinheiro', 'Dinheiro ou saque'], ['ted', 'TED ou DOC']];
+export const payLabel = k => (PAY.find(p => p[0] === k) || [])[1] || '';
+export function payOf(S, t) {
+  if (t.pay) return t.pay;
+  if (t.type === 'trf' || t.folha || t.adj || t.cardPay) return '';
+  if (t.recId) { const r = (S.rec || []).find(x => x.id === t.recId); if (r && r.pay) return r.pay; }
+  const d = String((t.desc || '') + ' ' + (t.rawDesc || '')).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  if (/\bPIX\b/.test(d)) return t.type === 'cred' ? 'pixcred' : /AUTOMATIC/.test(d) ? 'pixauto' : /PARCEL/.test(d) ? 'pixparc' : /RECORREN/.test(d) ? 'pixrec' : /AGEND/.test(d) ? 'pixag' : 'pix';
+  if (t.type === 'cred') return '';
+  if (/BOLETO|TITULO|CONVENIO/.test(d)) return 'boleto';
+  if (/DEB(ITO)?\.? ?AUT/.test(d)) return 'debauto';
+  if (/COMPRA (COM|NO) (CARTAO|DEBITO)|CARTAO DE DEBITO|ELO DEBITO|VISA ELECTRON|MAESTRO/.test(d)) return 'debito';
+  if (/\bSAQUE\b/.test(d)) return 'dinheiro';
+  if (/\bTED\b|\bDOC\b/.test(d)) return 'ted';
+  return '';
+}
+/* despesas do mês por forma de pagamento (mesma regra do resumo; cartão sem Pix aparece como "Cartão de crédito") */
+export function byPay(S, m) {
+  const tot = {};
+  S.tx.forEach(t => {
+    if (t.adj || t.reimb || t.cardPay || t.type === 'trf' || t.type === 'rec' || (t.type === 'cred' && isThird(S, t))) return;
+    if ((t.type === 'cred' ? txComp(S, t) : mOf(t.date)) !== m) return;
+    const k = t.folha ? 'folha' : payOf(S, t) || (t.type === 'cred' ? 'cartao' : 'outros');
+    tot[k] = tot[k] || { k, total: 0, n: 0 }; tot[k].total += t.amount; tot[k].n++;
+  });
+  return Object.values(tot).map(x => ({ ...x, total: r2(x.total), label: x.k === 'folha' ? 'Descontado na folha' : x.k === 'cartao' ? 'Cartão de crédito' : x.k === 'outros' ? 'Sem forma informada' : payLabel(x.k) })).sort((a, b) => b.total - a.total);
 }

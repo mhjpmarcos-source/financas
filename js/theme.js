@@ -1,6 +1,8 @@
 /* Aparência: claro, escuro ou automático (segue o aparelho) e o estilo visual (Maré é o padrão).
    Fica por aparelho (não vai ao Drive). Carregado no <head>, antes do CSS pintar, para a tela não piscar na cor errada. */
 (function () {
+  /* o app não funciona embutido em outra página (alguém poderia cobri-lo e induzir toques): sai da moldura ou não mostra nada */
+  try { if (window.top !== window.self) { document.documentElement.style.display = 'none'; window.top.location = window.self.location.href; } } catch (e) { document.documentElement.style.display = 'none'; }
   var STYLES = ['mare', 'mata', 'ameixa'], MODES = ['auto', 'light', 'dark'];
   var BAR = { mata: ['#0b5d4a', '#0f2f27'], ameixa: ['#4b2170', '#2a163f'], mare: ['#0c4a5f', '#0d2f3b'] };
   var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;

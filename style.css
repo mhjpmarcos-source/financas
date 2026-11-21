@@ -575,3 +575,5 @@ a.link{text-decoration:none}
 .doc a{color:var(--brand); font-weight:700}
 .doc li{margin:5px 0}
 .doc code{background:var(--field); padding:1px 6px; border-radius:6px; font-size:14px}
+
+.tag.pay{background:color-mix(in srgb, var(--cta) 22%, var(--card)); color:var(--ink)}

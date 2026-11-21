@@ -160,6 +160,11 @@ export async function backupNow(reason = 'manual') {
 export const listBackups = () => drive.listBackups();
 export const downloadBackup = id => drive.download(id);
 
+/* espera a sincronização em andamento (e a que ficou na fila) terminar; usado no primeiro acesso, antes de decidir se há dados */
+export function whenIdle(ms = 15000) {
+  const t0 = Date.now();
+  return new Promise(res => { const tick = () => (!running && !again) || Date.now() - t0 > ms ? res() : setTimeout(tick, 80); tick(); });
+}
 /* verifica se há dados no Drive desta conta (usado no primeiro acesso) */
 export async function remoteExists() {
   const f = await drive.findDataFile();

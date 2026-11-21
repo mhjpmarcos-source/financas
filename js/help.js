@@ -19,6 +19,7 @@ export const GUIDE = [
     ['Como lanço uma compra parcelada?', 'No <b>+</b>, escolha Cartão (ou Despesa), informe o valor total e, em Frequência, <b>Parcelada</b> com o número de parcelas. O app distribui as parcelas pelos meses.'],
     ['Como cadastro uma conta que se repete?', 'No <b>+</b>, em Frequência, escolha <b>Fixa todo mês</b> (mesmo valor) ou <b>Todo mês, valor variável</b> (luz, água). Ou vá em Agenda › Fixas e parcelas. O app cria os próximos 12 meses como previstos.'],
     ['O que posso importar?', 'Fatura de cartão e extrato de conta em PDF, CSV ou OFX, e contracheque em PDF (vários de uma vez). PDF com senha: cadastre os dígitos do CPF em Ajustes ou digite a senha na hora.'],
+    ['Como lanço um Pix?', 'No <b>+</b>, em <b>Forma de pagamento</b>: Pix (sai na hora), Pix agendado (fica pendente até a data), Pix agendado recorrente e Pix Automático (viram conta que se repete), Pix parcelado (as parcelas saem da conta) e Pix no crédito (vai para a fatura do cartão). Na importação, o app reconhece o tipo pelo nome que vem do banco.'],
     ['E se eu já tinha lançado à mão?', 'A revisão da importação marca como <b>duplicata</b> o que parece já estar lançado e não importa de novo, a menos que você peça.'],
     ['O que são parcelas "previstas"?', 'Quando a fatura traz "3/10", o app cria as parcelas 4 a 10 nas faturas seguintes. A fatura do mês seguinte troca a prevista pela real, sem duplicar.']
   ]],
