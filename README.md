@@ -7,7 +7,8 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.11.0.** Novidades:
+**Versão atual: 0.12.0.** Novidades:
+- **0.12.0:** **cara nova e ações à mão.** Aparência em Ajustes: modo **automático, claro ou escuro** e três **estilos** (Mata, Ameixa, Maré), cada um com cores, letra e formato de botão próprios; vale por aparelho. Topo colorido com o mês e o resultado em destaque; **atalhos** em Lançamentos (Importar, Despesa, Compra no cartão, Receita, Transferir, Pagar fatura); botão **+** em todas as abas. Na **fatura**, "Importar", "+ Compra", "Registrar pagamento" e "Editar cartão" ficam no alto, antes da lista de compras; em Lançamentos, cada fatura do mês tem "Abrir", "Importar" e "Pagar". Toda folha tem **botão de fechar** e os botões de salvar ficam presos embaixo; "+ Nova conta", "+ Novo cartão", "+ Nova reserva", "+ Eu devo" e os cadastros de Fixas e parcelas subiram para o título de cada bloco. No computador, o menu fica na lateral. Ícone novo.
 - **0.11.0:** **quem usa o cartão** (titular, adicional, virtual): em Contas › cartão › "Quem usa este cartão", cada final de 4 dígitos ganha um nome. As compras lidas da fatura (PDF, ou CSV com coluna "Final"/"Cartão") recebem a marca de quem usou, além da categoria, e a fatura e o Resumo mostram o total por pessoa. Por padrão é despesa de quem paga a fatura; se a pessoa devolve o dinheiro, as compras dela saem das despesas e o app cria um "a receber" por fatura, que o Pix dela quita pelo "Vincular a…" (se vier menos, o resto continua a receber). Editar a categoria de uma compra importada não a tira mais da fatura em que veio.
 - **0.10.2:** **fatura que o cartão não gerou** (mudança de vencimento): na tela da fatura que só tem parcelas previstas, "avise que esta fatura não existiu" passa parcelas e pagamentos para a fatura seguinte; as parcelas previstas acompanham a última parcela real de cada compra.
 - **0.10.1:** a busca de lançamentos atualiza só os resultados enquanto se digita (no iPhone o teclado não pisca nem troca de tipo a cada tecla); "Para conferir" também aponta despesa cuja descrição diz que é pagamento de fatura.
@@ -116,9 +117,11 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `holder.js` — quem usa cada cartão (portadores) e reembolso.
   - `link.js` — vínculos de lançamentos que já existem e a lista "para conferir".
   - `app.js` — telas.
+  - `theme.js` — aparência (claro/escuro/automático e estilo), carregado antes do CSS; as cores de cada estilo estão no começo de `style.css`.
   - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.
 - Testes de navegador também para a Agenda e as dívidas: `e2e/agenda.e2e.mjs`.
 - Testes (pasta `tests`): `npm install && python3 fixtures/gerar.py && npm test`. Os documentos de teste são **fictícios** e gerados pelo `gerar.py`. Testes de navegador: `e2e/basico.e2e.mjs`, `e2e/importacao.e2e.mjs`, `e2e/contracheque.e2e.mjs` e os demais da pasta `e2e` (precisam do Playwright e de um servidor local na raiz do app; instruções no topo de cada arquivo).
+- Fontes: pasta `fonts` (Figtree, Plus Jakarta Sans e Nunito, licença SIL OFL 1.1), servidas pelo próprio app. Ícone: `icons/icone.svg` (os PNG saem dele).
 - Leitor de PDF: `vendor/pdfjs` (pdf.js da Mozilla, licença Apache-2.0), carregado só na hora de importar.
 - Nunca coloque faturas, extratos, backups ou dados reais no repositório (o `.gitignore` bloqueia `*.pdf`, `*.csv`, `*.ofx` e planilhas).

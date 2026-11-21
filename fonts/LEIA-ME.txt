@@ -1,0 +1,8 @@
+Fontes do app, guardadas aqui para funcionar sem internet e sem pedir nada a outro site.
+Todas têm licença SIL Open Font License 1.1 (uso e redistribuição livres): https://openfontlicense.org
+
+figtree.woff2  Figtree, © The Figtree Project Authors (github.com/erikdkennedy/figtree)
+jakarta.woff2  Plus Jakarta Sans, © The Plus Jakarta Sans Project Authors (github.com/tokotype/PlusJakartaSans)
+nunito.woff2   Nunito, © The Nunito Project Authors (github.com/googlefonts/nunito)
+
+Arquivos variáveis (peso 300 a 800), só com os caracteres latinos, tirados dos pacotes @fontsource-variable.

@@ -14,7 +14,7 @@ import * as H from './imp/holerite.js';
 import * as L from './link.js';
 import * as PH from './holder.js';
 
-export const VERSION = '0.11.0';
+export const VERSION = '0.12.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -39,6 +39,20 @@ const ICON = {
   contas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h3"/></svg>',
   ajustes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>'
 };
+
+const SV = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const QI = {
+  imp: SV('<path d="M12 15V4M8 8l4-4 4 4M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>'),
+  deb: SV('<path d="M7 17 17 7M9 7h8v8"/>'),
+  rec: SV('<path d="M17 7 7 17M15 17H7V9"/>'),
+  cred: SV('<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18M7 15h3"/>'),
+  trf: SV('<path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>'),
+  fat: SV('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/>'),
+  job: SV('<rect x="3" y="7" width="18" height="13" rx="2.5"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>'),
+  plus: SV('<path d="M12 5v14M5 12h14"/>')
+};
+/* marca redonda do lançamento: cor do grupo no fundo e o desenho do tipo (saída, entrada, cartão, transferência, fatura) */
+const dot = (kind, color) => `<span class="dot" style="--c:${color || '#90a4ae'}">${QI[kind] || QI.deb}</span>`;
 
 /* ---------- inicialização ---------- */
 /* campos de valor: os dígitos entram como centavos (1 2 3 4 5 → 123,45), como em app de banco.
@@ -302,7 +316,7 @@ function render() {
   const title = ui.sub === 'cats' ? 'Categorias' : { lanc: 'Lançamentos', agenda: 'Agenda', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
   app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="eye" id="eye" aria-label="Esconder ou mostrar os valores"></button><button class="chip" id="chip"><i></i><span></span></button></header>
     <main class="page" id="page"></main>
-    ${ui.tab === 'lanc' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
+    ${ui.tab !== 'ajustes' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ICON[k]}<span>${l}</span></button>`).join('')}</nav></div>`;
   app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.sub = null; ui.q = ''; render(); window.scrollTo(0, 0); } };
   $('#chip').onclick = chipAction;
@@ -386,7 +400,7 @@ const shortM = m => ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'se
 function txRow(t, showDate, inFat) {
   if (t.cardPay) {
     const f = t.faturaKey && C.faturas(S()).find(x => x.key === t.faturaKey), card = f && accById(f.cardId);
-    return `<li data-tx="${t.id}" class="tx"><span class="dot" style="background:#607d8b">F</span><span class="t"><b>${esc((t.desc || 'Pagamento de fatura').replace(/^Pagamento de fatura\s+·\s+(?=.)/, ''))}</b>
+    return `<li data-tx="${t.id}" class="tx">${dot('fat', '#607d8b')}<span class="t"><b>${esc((t.desc || 'Pagamento de fatura').replace(/^Pagamento de fatura\s+·\s+(?=.)/, ''))}</b>
       <small>${showDate ? C.fmtD(t.date) + '/' + t.date.slice(2, 4) + ' · ' : ''}${f ? `fatura ${esc(card ? card.name : '')} ${shortM(f.comp)} · ${f.status === 'liq' ? 'paga' : 'faltam ' + C.brl(f.rest)}` : ''}${accById(t.accountId) ? (f ? ' · ' : '') + esc(accById(t.accountId).name) : ''}</small>
       <span class="chips"><span class="tag info">pagamento de fatura</span>${f ? '' : '<span class="tag">sem vínculo com fatura</span>'}</span></span>
       <span class="num">−${C.brl(t.amount)}</span></li>`;
@@ -409,7 +423,7 @@ function txRow(t, showDate, inFat) {
     + (t.folha ? chip('pago pela folha', 'info') : '') + (t.adj ? chip('ajuste de valor', 'info') : '')
     + (t.prev ? chip('previsto') : t.status === 'pend' && t.type !== 'cred' ? chip('pendente') : '')
     + (!t.itemId && t.type !== 'trf' && !t.reimb ? chip('sem categoria') : '');
-  return `<li data-tx="${t.id}" class="tx"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${esc((TYPE[t.type] || '?')[0])}</span>
+  return `<li data-tx="${t.id}" class="tx">${dot(t.type, g ? g.color : t.type === 'trf' ? '#5c6bc0' : '')}
     <span class="t"><b>${esc(title)}</b><small>${esc(sub)}</small>${chips ? `<span class="chips">${chips}</span>` : ''}</span>
     <span class="num ${t.type === 'rec' || t.amount < 0 ? 'pos' : ''}">${t.type === 'rec' || t.type === 'trf' ? '' : t.amount < 0 ? '+' : '−'}${C.brl(Math.abs(t.amount))}</span></li>`;
 }
@@ -434,18 +448,34 @@ function askChoice(title, msg, options) {
 /* a busca atualiza só os resultados: trocar o campo a cada letra fazia o iPhone fechar e reabrir o teclado (e trocar o tipo dele) */
 let qTimer = null;
 function pageLanc() {
-  const q = ui.q || '';
-  $('#page').innerHTML = `<div class="search"><input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Buscar em todos os meses (nome ou valor)" value="${esc(q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button class="btn" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)">Importar</button></div><div id="lbody">${lancBody()}</div>`;
+  const q = ui.q || '', st = S();
+  const hasCards = st.accounts.some(a => a.nature === 'credito' && a.active !== false);
+  const qa = (k, label, extra) => `<button class="qa ${extra || ''}" data-qa="${k}"><i>${QI[k === 'pgto' ? 'fat' : k]}</i>${label}</button>`;
+  $('#page').innerHTML = `<div id="ltop">${lancTop()}</div>
+    <div class="quick" id="lquick"><button class="qa main" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)"><i>${QI.imp}</i>Importar</button>${qa('deb', 'Despesa')}${hasCards ? qa('cred', 'Compra no cartão') : ''}${qa('rec', 'Receita')}${qa('trf', 'Transferir')}${hasCards ? qa('pgto', 'Pagar fatura') : ''}</div>
+    <div class="search"><input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Buscar em todos os meses (nome ou valor)" value="${esc(q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div><div id="lbody">${lancBody()}</div>`;
   $('#imp').onclick = () => pickImportFile({});
   const qi = $('#q');
-  qi.oninput = () => { ui.q = qi.value; clearTimeout(qTimer); qTimer = setTimeout(() => { const b = $('#lbody'); if (b) b.innerHTML = lancBody(); }, 120); };
+  qi.oninput = () => { ui.q = qi.value; clearTimeout(qTimer); qTimer = setTimeout(() => { const b = $('#lbody'), t = $('#ltop'); if (t) t.innerHTML = lancTop(); if (b) b.innerHTML = lancBody(); }, 120); };
   qi.onkeydown = e => { if (e.key === 'Enter') qi.blur(); }; // "Buscar" no teclado fecha o teclado para ver os resultados
   $('#page').onclick = e => {
     if (monthNavClick(e, pageLanc)) return;
+    const a = e.target.closest('[data-qa]'); if (a) return a.dataset.qa === 'pgto' ? payFaturaSheet(null, {}) : txSheet(null, { type: a.dataset.qa });
     if (e.target.closest('#rv-open')) return conferirSheet();
+    const fi = e.target.closest('[data-fimp]'); if (fi) return pickImportFile({ accountId: fi.dataset.fimp });
+    const fp = e.target.closest('[data-fpay]'); if (fp) return payFaturaSheet(null, { cardId: fp.dataset.fpay, comp: ui.month });
     const fo = e.target.closest('[data-fat]'); if (fo) return faturaSheet(fo.dataset.fat, ui.month);
     const li = e.target.closest('[data-tx]'); if (li) txSheet(S().tx.find(t => t.id === li.dataset.tx));
   };
+}
+/* bloco do alto: mês e os três números. Some durante a busca (que vale para todos os meses). */
+function lancTop() {
+  if ((ui.q || '').trim()) return '';
+  const st = S(), m = ui.month, sum = C.monthSummary(st, m);
+  return `<div class="hcard">${monthNav(m)}<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
+      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
+      <div class="kpi"><small>Resultado do mês</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
+      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}${sum.terc ? ` ${C.brl(sum.terc)} em compras de quem devolve o dinheiro não contam como despesa sua.` : ''}</p></div>`;
 }
 function lancBody() {
   const st = S(), m = ui.month, q = ui.q || '';
@@ -455,16 +485,11 @@ function lancBody() {
     html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
     if (res.length) html += `<div class="card" style="padding-top:2px"><ul class="list">${res.map(t => txRow(t, true)).join('')}</ul></div>`;
   } else {
-    const sum = C.monthSummary(st, m);
     const list = st.tx.filter(t => ['rec', 'deb', 'trf'].includes(t.type) ? C.mOf(t.date) === m : t.type === 'cred' ? C.txComp(st, t) === m : false)
       .sort((a, b) => (b.date.localeCompare(a.date)) || ((b.created || 0) - (a.created || 0)));
-    html += monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
-      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
-      <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
-      <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}${sum.terc ? ` ${C.brl(sum.terc)} em compras de quem devolve o dinheiro não contam como despesa sua.` : ''}</p>`;
     const rv = L.review(st);
     if (rv.n) html += `<button class="banner" id="rv-open"><span class="grow"><b>${rv.n} lançamento${rv.n > 1 ? 's' : ''} para conferir</b><small>${[rv.pay.length + rv.relink.length ? 'pagamento de fatura lançado como despesa' : '', rv.refund.length ? 'pix devolvido' : '', rv.nocat.length ? 'sem categoria' : ''].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">›</span></button>`;
-    if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar.</div>`;
+    if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar ou em <b>Importar</b> para trazer uma fatura ou um extrato.</div>`;
     else {
       const inAcc = list.filter(t => t.type !== 'cred'), inCard = list.filter(t => t.type === 'cred');
       if (inAcc.length) {
@@ -481,7 +506,8 @@ function lancBody() {
         const rows = inCard.filter(t => t.accountId === card.id); if (!rows.length) return;
         const f = C.faturaOf(st, card.id, m), prevN = rows.filter(t => t.prev).length;
         html += `<details class="card fat" open><summary><span class="grow"><b>Fatura ${esc(card.name)}</b><small>${rows.length} compra${rows.length > 1 ? 's' : ''}${prevN ? ` · ${prevN} prevista${prevN > 1 ? 's' : ''}` : ''} · vence ${C.fmtD(f.date)} · ${f.status === 'liq' ? 'paga' : f.status === 'parc' ? 'paga em parte' : 'em aberto'}</small></span><span class="num">−${C.brl(f.total)}</span></summary>
-          <ul class="list">${rows.map(t => txRow(t, true, true)).join('')}</ul><button class="link" data-fat="${card.id}">Abrir a fatura →</button></details>`;
+          <div class="fatacts"><button class="btn small" data-fat="${card.id}">Abrir a fatura</button><button class="btn small" data-fimp="${card.id}">Importar</button>${f.status !== 'liq' && f.total > 0 ? `<button class="btn small" data-fpay="${card.id}">Pagar</button>` : ''}</div>
+          <ul class="list">${rows.map(t => txRow(t, true, true)).join('')}</ul></details>`;
       });
     }
   }
@@ -501,9 +527,9 @@ function optItems(kind, sel) {
 
 function openSheet(html, bind) {
   const sh = $('#sheet');
-  sh.innerHTML = `<div class="panel" role="dialog" aria-modal="true">${html}</div>`;
+  sh.innerHTML = `<div class="box"><div class="shead"><i class="grab" aria-hidden="true"></i><button type="button" class="sx" id="sheet-x" aria-label="Fechar">✕</button></div><div class="panel" role="dialog" aria-modal="true">${html}</div></div>`;
   sh.hidden = false;
-  sh.onclick = e => { if (e.target === sh) closeSheet(); };
+  sh.onclick = e => { if (e.target === sh || e.target.closest('#sheet-x')) closeSheet(); };
   bind(sh.querySelector('.panel'));
 }
 function closeSheet() { const sh = $('#sheet'); sh.hidden = true; sh.innerHTML = ''; }
@@ -951,11 +977,11 @@ function slipSheet(list, title) {
 /* ----- renda do emprego: fonte de renda, consignados em folha e contracheques guardados ----- */
 function jobsHTML(st) {
   const jobs = st.jobs || [];
-  if (!jobs.length) return `<div class="card"><h2>Renda do emprego</h2><p class="hint">Importe o contracheque em PDF (um ou vários de uma vez): o app lança o líquido, separa o que é fixo do que é eventual, mostra os consignados descontados em folha e prevê os próximos meses pelo piso fixo.</p><button class="link" id="job-imp">Importar contracheque</button></div>`;
-  return `<div class="card"><h2>Renda do emprego</h2><ul class="list wrap">${jobs.map(j => {
+  if (!jobs.length) return `<div class="card"><div class="chead"><h2>Renda do emprego</h2><button class="link" id="job-imp">Importar contracheque</button></div><p class="hint">Importe o contracheque em PDF (um ou vários de uma vez): o app lança o líquido, separa o que é fixo do que é eventual, mostra os consignados descontados em folha e prevê os próximos meses pelo piso fixo.</p></div>`;
+  return `<div class="card"><div class="chead"><h2>Renda do emprego</h2><button class="link" id="job-imp">+ Importar contracheque</button></div><ul class="list wrap">${jobs.map(j => {
     const sl = H.slipsOf(st, j.id), P = H.pisoOf(sl.filter(x => x.tipo === 'normal')), last = sl[sl.length - 1], lo = H.loansOf(st, j.id);
-    return `<li data-job="${j.id}"><span class="dot" style="background:#2e9e6b">R</span><span class="t"><b>${esc(j.name)}</b><small>${sl.length} contracheque${sl.length === 1 ? '' : 's'}${last ? ' · último ' + shortM(H.slipMonth(last)) : ''}${lo.filter(l => !l.ended).length ? ` · ${lo.filter(l => !l.ended).length} consignado(s)` : ''}</small></span><span class="num pos">${P ? C.brl(P.piso) : ''}</span></li>`;
-  }).join('')}</ul><p class="hint">O valor é o piso fixo previsto por mês (sem eventuais).</p><button class="link" id="job-imp">+ Importar contracheque</button></div>`;
+    return `<li data-job="${j.id}">${dot('job', '#2e9e6b')}<span class="t"><b>${esc(j.name)}</b><small>${sl.length} contracheque${sl.length === 1 ? '' : 's'}${last ? ' · último ' + shortM(H.slipMonth(last)) : ''}${lo.filter(l => !l.ended).length ? ` · ${lo.filter(l => !l.ended).length} consignado(s)` : ''}</small></span><span class="num pos">${P ? C.brl(P.piso) : ''}</span></li>`;
+  }).join('')}</ul><p class="hint">O valor é o piso fixo previsto por mês (sem eventuais).</p></div>`;
 }
 const loanLine = l => l.ended ? `✓ encerrado em ${l.end ? shortM(l.end) : '—'}` : l.i ? `parcela ${l.i}${l.n ? ` de ${l.n} · faltam ${l.left} · termina em ${shortM(l.end)}` : ' · total de parcelas não informado'}${l.manual ? ' · corrigida por você' : ''}` : 'parcela não informada';
 function jobSheet(id) {
@@ -1051,15 +1077,16 @@ function slipDetail(slipId) {
 function pageAgenda() {
   const st = S(), today = M.todayISO(), in30 = C.mAdd(today.slice(0, 7), 1) + today.slice(7);
   const view = ui.agView || 'pend';
-  let html = `<div class="seg" id="agseg"><button data-v="pend" aria-pressed="${view === 'pend'}">A vencer</button><button data-v="fix" aria-pressed="${view === 'fix'}">Fixas e parcelas</button><button data-v="loans" aria-pressed="${view === 'loans'}">Dívidas e Pix</button></div>`;
-  if (view === 'fix') html += fixasHTML(st);
+  // o seletor e os números da visão ficam no bloco colorido do alto
+  let html = `<div class="hcard"><div class="seg" id="agseg"><button data-v="pend" aria-pressed="${view === 'pend'}">A vencer</button><button data-v="fix" aria-pressed="${view === 'fix'}">Fixas e parcelas</button><button data-v="loans" aria-pressed="${view === 'loans'}">Dívidas e Pix</button></div>`;
+  if (view === 'fix') { const fx = fixasHTML(st); html += fx.head + '</div>' + fx.body; }
   else if (view === 'pend') {
     const all = C.pendings(st);
     const sum = (l, d) => l.filter(x => x.dir === d).reduce((s, x) => s + x.amount, 0);
     const late = all.filter(x => x.date < today), next = all.filter(x => x.date >= today && x.date <= in30), later = all.filter(x => x.date > in30);
     const nextAll = [...late, ...next];
     html += `<div class="kpis two"><div class="kpi"><small>A receber (até 30 dias)</small><b class="num pos">${C.brl(sum(nextAll, 'in'))}</b></div>
-      <div class="kpi"><small>A pagar (até 30 dias)</small><b class="num neg">${C.brl(sum(nextAll, 'out'))}</b></div></div>`;
+      <div class="kpi"><small>A pagar (até 30 dias)</small><b class="num neg">${C.brl(sum(nextAll, 'out'))}</b></div></div></div>`;
     const block = (title, list, cls) => list.length ? `<div class="card ${cls || ''}"><h2>${title} <span class="hint">(${list.length})</span></h2><ul class="list full">${list.slice(0, 60).map(pendRow).join('')}</ul>${list.length > 60 ? `<p class="hint">e mais ${list.length - 60}…</p>` : ''}</div>` : '';
     html += block('Atrasados', late, 'late') + block('Próximos 30 dias', next) + block('Mais adiante', later);
     if (!all.length) html += `<div class="card empty">Nada pendente.<br>Receitas e despesas marcadas como pendentes, parcelas de dívidas e faturas em aberto aparecem aqui.</div>`;
@@ -1072,14 +1099,15 @@ function pageAgenda() {
     const group = (dir, title) => {
       const list = loans.filter(x => x.l.dir === dir).sort((a, b) => (a.s.rest === 0) - (b.s.rest === 0) || String(a.s.next && a.s.next.date).localeCompare(String(b.s.next && b.s.next.date)));
       const rest = list.reduce((s, x) => s + x.s.rest, 0);
-      return `<div class="card"><h2>${title}</h2><p class="hint">Saldo em aberto: <b class="num">${C.brl(rest)}</b></p>
+      return `<div class="card"><div class="chead"><h2>${title}</h2><button class="link" data-newloan="${dir}">+ ${dir === 'in' ? 'Alguém me deve' : 'Eu devo'}</button></div><p class="hint">Saldo em aberto: <b class="num">${C.brl(rest)}</b></p>
         ${list.length ? `<ul class="list wrap">${list.map(({ l, s }) => `<li data-loan="${l.id}"><span class="t"><b>${esc(l.person || 'Sem nome')}${l.desc ? ' · ' + esc(l.desc) : ''}</b>
           <small>${s.folha ? 'pago pela folha · ' + loanLine(s.folha) : s.rest === 0 ? '✓ quitado' : `${s.doneN}/${s.parcels.length} parcelas · próxima ${s.next ? C.fmtD(s.next.date) + '/' + s.next.date.slice(2, 4) : '—'}${s.late ? ` · <span class="tag">${s.late} atrasada(s)</span>` : ''}`}</small>
           <span class="bar"><i style="width:${s.total ? (s.paid / s.total * 100).toFixed(0) : 0}%;background:var(--brand)"></i></span></span>
-          <span class="num">${s.folha && !s.folha.ended && s.folha.rest == null ? C.brl(s.folha.v) + '/mês' : C.brl(s.rest)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma.</p>'}
-        <button class="link" data-newloan="${dir}">+ ${dir === 'in' ? 'Alguém me deve' : 'Eu devo'}</button></div>`;
+          <span class="num">${s.folha && !s.folha.ended && s.folha.rest == null ? C.brl(s.folha.v) + '/mês' : C.brl(s.rest)}</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma.</p>'}</div>`;
     };
-    html += `<div class="cols">${group('in', 'Me devem (a receber)')}${group('out', 'Eu devo (a pagar)')}</div>${peopleHTML(st)}`;
+    const open = d => loans.filter(x => x.l.dir === d).reduce((s, x) => s + x.s.rest, 0);
+    html += `<div class="kpis two"><div class="kpi"><small>Me devem</small><b class="num pos">${C.brl(open('in'))}</b></div><div class="kpi"><small>Eu devo</small><b class="num neg">${C.brl(open('out'))}</b></div></div></div>
+      <div class="cols">${group('in', 'Me devem (a receber)')}${group('out', 'Eu devo (a pagar)')}</div>${peopleHTML(st)}`;
   }
   $('#page').innerHTML = html;
   $('#page').onclick = async e => {
@@ -1109,13 +1137,13 @@ function pendRow(p) {
   const today = M.todayISO();
   if (p.kind === 'fatura') {
     const card = accById(p.fatura.cardId);
-    return `<li data-pfat="${p.fatura.cardId}|${p.fatura.comp}"><span class="dot" style="background:#607d8b">F</span><span class="t"><b>Fatura ${esc(card ? card.name : '')} ${shortM(p.fatura.comp)}</b>
+    return `<li data-pfat="${p.fatura.cardId}|${p.fatura.comp}">${dot('fat', '#607d8b')}<span class="t"><b>Fatura ${esc(card ? card.name : '')} ${shortM(p.fatura.comp)}</b>
       <small>${C.fmtD(p.date)}/${p.date.slice(2, 4)}${p.fatura.status === 'parc' ? ` · paga em parte (${C.brl(p.fatura.paid)} de ${C.brl(p.fatura.total)})` : ''}${p.date < today ? ' · <span class="tag">atrasada</span>' : ''}</small></span><span class="num">−${C.brl(p.amount)}</span>
       <button class="okbtn" data-pay="${p.fatura.cardId}|${p.fatura.comp}">Pagar</button></li>`;
   }
   const t = p.tx, it = itemById(t.itemId), g = groupOf(it), acc = accById(t.accountId);
   const loan = t.loanId && S().loans.find(l => l.id === t.loanId);
-  return `<li data-ptx="${t.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${t.type === 'rec' ? 'R' : 'D'}</span>
+  return `<li data-ptx="${t.id}">${dot(t.type === 'rec' ? 'rec' : 'deb', g && g.color)}
     <span class="t"><b>${esc(loan ? [loan.person, loan.desc].filter(Boolean).join(' · ') : (t.desc || (it ? it.name : '')))}</b><small>${C.fmtD(t.date)}/${t.date.slice(2, 4)}${t.seriesId ? ` · ${t.seriesIdx}/${t.seriesN}` : ''}${t.recId ? (t.prev && ((S().rec || []).find(r => r.id === t.recId) || {}).kind === 'var' ? ' · valor previsto' : ' · todo mês') : ''}${acc ? ' · ' + esc(acc.name) : ''}${loan ? (loan.dir === 'in' ? ' · me deve' : ' · eu devo') : ''}${t.date < today ? ' · <span class="tag">atrasado</span>' : ''}</small></span>
     <span class="num ${t.type === 'rec' ? 'pos' : ''}">${t.type === 'rec' ? '' : '−'}${C.brl(t.amount)}</span>
     ${t.type === 'deb' && (payeeOf(t) || {}).pixKey ? `<button class="okbtn pix" data-pix="${t.id}">Pix</button>` : ''}<button class="okbtn" data-ok="tx:${t.id}">${t.type === 'rec' ? 'Recebido' : 'Pago'}</button></li>`;
@@ -1432,9 +1460,9 @@ function pageResumo() {
       <ul class="sublist">${g.items.map(i => `<li><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span></li>`).join('')}</ul></details>`).join('')
     : '<p class="hint">Nada neste mês.</p>';
   const b = C.budgetMonth(st, m);
-  $('#page').innerHTML = seg + monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
+  $('#page').innerHTML = '<div class="hcard">' + seg + monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
       <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
-      <div class="kpi"><small>Resultado</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
+      <div class="kpi"><small>Resultado do mês</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div></div>
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
     <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha.` : ''}</p>
     ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
@@ -1463,16 +1491,16 @@ function pageOrcamento(seg) {
   const pct = (r, p) => p ? Math.round(r / p * 100) : null;
   const barOf = (r, p, color) => { const x = p ? Math.min(100, r / p * 100) : 100; return `<div class="bar ${p && r > p ? 'over' : ''}"><i style="width:${Math.max(2, x).toFixed(1)}%;background:${p && r > p ? 'var(--neg)' : color}"></i></div>`; };
   const any = Object.values(st.orc || {}).some(o => o.def || Object.values(o.months || {}).some(Boolean));
-  let html = seg + monthNav(m);
+  let html = '<div class="hcard">' + seg + monthNav(m);
   html += `<div class="kpis"><div class="kpi"><small>Planejado</small><b class="num">${C.brl(b.plan)}</b></div><div class="kpi"><small>Gasto</small><b class="num ${b.plan && b.real > b.plan ? 'neg' : ''}">${C.brl(b.real)}</b></div>
-    <div class="kpi"><small>${b.real > b.plan ? 'Acima' : 'Disponível'}</small><b class="num ${b.real > b.plan ? 'neg' : 'pos'}">${C.brl(Math.abs(b.plan - b.real))}</b></div></div>`;
+    <div class="kpi"><small>${b.real > b.plan ? 'Acima' : 'Disponível'}</small><b class="num ${b.real > b.plan ? 'neg' : 'pos'}">${C.brl(Math.abs(b.plan - b.real))}</b></div></div></div>`;
   if (!any) html += `<div class="card"><h2>Sem orçamento ainda</h2><p class="hint">Defina quanto pretende gastar por mês em cada categoria. O app compara com o que foi gasto (débito no mês e cartão pela fatura).</p>
     <div class="row"><button class="btn primary" id="b-sug">Sugerir pela média dos últimos 3 meses</button><button class="btn" id="b-add">Definir uma categoria</button></div></div>`;
+  if (any) html += `<div class="newrow"><button class="btn" id="b-add">+ Orçar outra categoria</button><button class="btn" id="b-sug">Sugerir pela média</button></div>`;
   html += b.groups.map(g => `<div class="card"><div class="ghead"><span class="sw" style="background:${g.color}"></span><b class="grow">${esc(g.name)}</b><span class="num">${C.brl(g.real)}${g.plan ? ' / ' + C.brl(g.plan) : ''}</span></div>
     <ul class="list budget">${g.items.map(i => `<li data-bi="${i.id}"><span class="t"><b>${esc(i.name)}</b>${barOf(i.real, i.plan, g.color)}
       <small>${i.plan ? `${C.brl(i.real)} de ${C.brl(i.plan)} · ${pct(i.real, i.plan)}%${i.real > i.plan ? ` · <span class="neg">passou ${C.brl(i.real - i.plan)}</span>` : ` · faltam ${C.brl(i.plan - i.real)}`}` : `${C.brl(i.real)} gasto · sem orçamento`}</small></span></li>`).join('')}</ul></div>`).join('');
   if (b.noCat) html += `<p class="hint">${C.brl(b.noCat)} em lançamentos sem categoria não entram em nenhum grupo.</p>`;
-  if (any) html += `<div class="row"><button class="btn" id="b-add">+ Orçar outra categoria</button><button class="btn" id="b-sug">Sugerir pela média</button></div>`;
   $('#page').innerHTML = html;
   bindResumo(() => pageOrcamento(seg));
 }
@@ -1522,15 +1550,15 @@ function pageAno(seg) {
     ${g.items.map(i => `<tr class="i"><td class="sticky">${esc(i.name)}</td>${i.months.map(v => `<td>${cell(v)}</td>`).join('')}<td>${cell(i.total)}</td></tr>`).join('')}`).join('');
   const tot = (label, arr, total, cls) => `<tr class="t ${cls}"><td class="sticky">${label}</td>${arr.map(v => `<td class="${v < 0 ? 'neg' : ''}">${cell(v)}</td>`).join('')}<td class="${total < 0 ? 'neg' : ''}"><b>${cell(total)}</b></td></tr>`;
   const res = C.r2(Y.recT - Y.despT);
-  $('#page').innerHTML = seg + `<div class="month"><button data-y="-1" aria-label="Ano anterior">‹</button><b>${y}</b><button data-y="1" aria-label="Próximo ano">›</button></div>
+  $('#page').innerHTML = '<div class="hcard">' + seg + `<div class="month"><button data-y="-1" aria-label="Ano anterior">‹</button><b>${y}</b><button data-y="1" aria-label="Próximo ano">›</button></div>
     <div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(Y.recT)}</b></div><div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(Y.despT)}</b></div>
-    <div class="kpi"><small>Resultado</small><b class="num ${res < 0 ? 'neg' : ''}">${C.brl(res)}</b></div></div>
+    <div class="kpi"><small>Resultado do ano</small><b class="num ${res < 0 ? 'neg' : ''}">${C.brl(res)}</b></div></div></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn small" id="y-csv">Baixar planilha do ano (CSV)</button></div>
     <div class="card scrollx"><table class="year"><thead>${head}</thead><tbody>
       ${tot('Receitas', Y.recM, Y.recT, 'pos')}${groupRows(Y.rec, 'rec')}
       ${tot('Despesas', Y.despM, Y.despT, '')}${groupRows(Y.desp, 'desp')}
       ${tot('Resultado', Y.resM, res, 'res')}</tbody></table></div>
-    <p class="hint">Arraste a tabela para o lado para ver todos os meses. Cartão entra pelo mês da fatura.</p>
-    <button class="btn" id="y-csv">Baixar planilha do ano (CSV)</button>`;
+    <p class="hint">Arraste a tabela para o lado para ver todos os meses. Cartão entra pelo mês da fatura.</p>`;
   const sx = $('#page .scrollx'), cur = sx && sx.querySelector('th[data-cur]');
   if (cur) sx.scrollLeft = Math.max(0, cur.offsetLeft - sx.clientWidth + cur.offsetWidth * 3);
   bindResumo(() => pageAno(seg));
@@ -1545,19 +1573,21 @@ function pageContas() {
   const cards = st.accounts.filter(a => a.nature === 'credito' && a.active !== false);
   const archived = st.accounts.filter(a => a.active === false);
   const total = debs.reduce((s, a) => s + (bal[a.id] || 0), 0), invTotal = invs.reduce((s, a) => s + (bal[a.id] || 0), 0);
-  let html = `<div class="cols"><div class="card"><h2>Saldo hoje</h2><div class="num" style="font-size:28px;font-weight:700">${C.brl(total)}</div>
-    <p class="hint">Saldo inicial de cada conta + o que já entrou − o que já saiu. Pendentes e compras no cartão ainda não pagas não contam. Toque na conta para ver a conta completa.</p><ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
+  const projT = debs.reduce((s, a) => s + (proj[a.id] || 0), 0);
+  let html = `<div class="hcard"><small class="lbl">Saldo hoje</small><span class="num big ${total < 0 ? 'neg' : ''}">${C.brl(total)}</span>
+    <p class="hint">No fim do mês, com o que está pendente: <b class="num ${projT < 0 ? 'neg' : ''}">${C.brl(projT)}</b></p></div>
+    <div class="cols"><div class="card"><div class="chead"><h2>Contas</h2><button class="link" data-new="debito">+ Nova conta</button></div>
+    <ul class="list wrap">${debs.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b>
       <small>No fim do mês, com pendentes: ${C.brl(proj[a.id] || 0)}</small></span><span class="num ${bal[a.id] < 0 ? 'neg' : ''}">${C.brl(bal[a.id] || 0)}</span></li>`).join('')}</ul>
-    <button class="link" data-new="debito">+ Nova conta</button></div>${resCard(st, today, total)}`;
-  html += `<div class="card" id="inv-card"><h2>Investimentos</h2>${invs.length ? `<div class="num" style="font-size:22px;font-weight:700">${C.brl(invTotal)}</div>
+    <p class="hint">Saldo inicial de cada conta + o que já entrou − o que já saiu. Pendentes e compras no cartão ainda não pagas não contam. Toque na conta para ver a conta completa.</p></div>${resCard(st, today, total)}`;
+  html += `<div class="card" id="inv-card"><div class="chead"><h2>Investimentos</h2><button class="link" data-new="inv">+ Novo</button></div>${invs.length ? `<div class="num" style="font-size:22px;font-weight:700">${C.brl(invTotal)}</div>
       <p class="hint">Fica fora do Saldo hoje. Para investir a sobra do mês, lance uma <b>Transferência</b> da conta para o investimento: não conta como despesa.</p>
       <ul class="list wrap">${invs.map(a => { const y = C.invYield(st, a.id, today); return `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b><small>Rendimento registrado: ${C.brl(y.mes)} no mês · ${C.brl(y.ano)} no ano</small></span><span class="num">${C.brl(bal[a.id] || 0)}</span></li>`; }).join('')}</ul>`
-    : '<p class="hint">Dinheiro aplicado (poupança, CDB, Tesouro, fundos, corretora). Cadastre a conta de investimento com o valor que já tem lá; para investir a sobra do mês, lance uma <b>Transferência</b> da conta corrente para ela. Transferência não é despesa.</p>'}
-    <button class="link" data-new="inv">+ Nova conta de investimento</button></div>`;
-  html += `<div class="card"><h2>Cartões</h2>${cards.length ? '<p class="hint">Toque no cartão para ver as faturas.</p>' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
+    : '<p class="hint">Dinheiro aplicado (poupança, CDB, Tesouro, fundos, corretora). Cadastre a conta de investimento com o valor que já tem lá; para investir a sobra do mês, lance uma <b>Transferência</b> da conta corrente para ela. Transferência não é despesa.</p>'}</div>`;
+  html += `<div class="card"><div class="chead"><h2>Cartões</h2><button class="link" data-new="credito">+ Novo cartão</button></div>${cards.length ? '<p class="hint">Toque no cartão para ver a fatura, importar o arquivo dela ou registrar o pagamento.</p>' : '<p class="hint">Nenhum cartão cadastrado.</p>'}<ul class="list wrap">${cards.map(c => {
     const comp = C.cardCycle(c, today).comp, f = C.faturaOf(st, c.id, comp);
-    return `<li data-card="${c.id}"><span class="t"><b>${esc(c.name)}</b><small>Fatura aberta: ${C.monthLabel(comp).toLowerCase()} · vence ${C.fmtD(f.date)}</small></span><span class="num">${C.brl(f.total)}</span></li>`;
-  }).join('')}</ul><button class="link" data-new="credito">+ Novo cartão</button></div></div>
+    return `<li data-card="${c.id}">${dot('cred', '#607d8b')}<span class="t"><b>${esc(c.name)}</b><small>Fatura aberta: ${C.monthLabel(comp).toLowerCase()} · vence ${C.fmtD(f.date)}</small></span><span class="num">${C.brl(f.total)}</span></li>`;
+  }).join('')}</ul></div></div>
   ${archived.length ? `<div class="card"><h2>Arquivadas</h2><ul class="list">${archived.map(a => `<li data-acc="${a.id}"><span class="t"><b>${esc(a.name)}</b><small>${a.nature === 'credito' ? 'Cartão' : 'Conta'} arquivado</small></span></li>`).join('')}</ul></div>` : ''}`;
   $('#page').innerHTML = html;
   $('#page').onclick = e => {
@@ -1593,12 +1623,11 @@ function resCard(st, today, total) {
       <small>${x.r.done ? 'Concluída' : x.r.target ? `${Math.round(x.pct)}% de ${C.brl(x.r.target)}${x.rest ? ` · faltam ${C.brl(x.rest)}` : ' · meta atingida ✓'}` : 'Sem meta de valor'}${!x.r.done && x.perMonth ? ` · guardar ${C.brl(x.perMonth)}/mês até ${C.fmtD(x.r.deadline)}/${x.r.deadline.slice(2, 4)}` : ''}${x.late ? ' · <span class="neg">prazo passou</span>' : ''}</small></span>
       <span class="num">${C.brl(x.saved)}</span></li>`;
   const livre = C.r2(total - R.total);
-  return `<div class="card"><h2>Reservas</h2>
+  return `<div class="card"><div class="chead"><h2>Reservas</h2><button class="link" id="res-new">+ Nova reserva</button></div>
     ${act.length ? `<div class="kpis two"><div class="kpi"><small>Guardado</small><b class="num">${C.brl(R.total)}</b></div><div class="kpi"><small>Livre nas contas</small><b class="num ${livre < 0 ? 'neg' : ''}">${C.brl(livre)}</b></div></div>
       ${livre < 0 ? '<p class="hint neg">As reservas somam mais do que o saldo das contas.</p>' : ''}` : '<p class="hint">Separe parte do saldo para objetivos (emergência, viagem, IPVA…). O dinheiro continua na conta; o app mostra quanto dele está comprometido e quanto está livre.</p>'}
     <ul class="list wrap">${act.map(row).join('')}</ul>
-    ${done.length ? `<details><summary class="hint">Concluídas (${done.length})</summary><ul class="list wrap">${done.map(row).join('')}</ul></details>` : ''}
-    <button class="link" id="res-new">+ Nova reserva</button></div>`;
+    ${done.length ? `<details><summary class="hint">Concluídas (${done.length})</summary><ul class="list wrap">${done.map(row).join('')}</ul></details>` : ''}</div>`;
 }
 
 function resForm(r) {
@@ -1823,21 +1852,21 @@ function fixasHTML(st) {
   const act = R.filter(x => !x.ended), out = act.filter(x => x.r.type !== 'rec'), inc = act.filter(x => x.r.type === 'rec');
   const sum = l => l.reduce((s, x) => s + x.est, 0);
   const row = ({ r, s, est, ended }) => { const acc = accById(r.accountId), it = itemById(r.itemId), g = groupOf(it);
-    return `<li data-rec="${r.id}"><span class="dot" style="background:${g ? g.color : '#90a4ae'}">${r.type === 'rec' ? 'R' : r.type === 'cred' ? 'C' : 'D'}</span>
+    return `<li data-rec="${r.id}">${dot(r.type, g && g.color)}
       <span class="t"><b>${esc(r.desc || (it ? it.name : ''))}</b><small>dia ${r.day}${acc ? ' · ' + esc(acc.name) : ''}${r.person ? ' · Pix' : ''}${ended ? ` · encerrada em ${shortM(r.end)}` : r.end ? ` · até ${shortM(r.end)}` : ''}${r.kind === 'var' && s.n > 1 ? ` · média ${C.brl(s.avg3)} (de ${C.brl(s.min)} a ${C.brl(s.max)})` : r.kind === 'var' && s.n ? (r.type === 'rec' ? ' · 1 mês recebido' : ' · 1 mês pago') : r.kind === 'var' ? ' · estimativa' : ''}</small></span>
       <span class="num ${r.type === 'rec' ? 'pos' : ''}">${r.kind === 'var' ? '≈ ' : ''}${C.brl(est)}</span></li>`; };
   const block = (title, list, hint) => list.length ? `<div class="card"><h2>${title} <span class="hint">(${list.length})</span></h2>${hint ? `<p class="hint">${hint}</p>` : ''}<ul class="list wrap">${list.map(row).join('')}</ul></div>` : '';
   const sug = C.detectRecurring(st, today);
   const P = C.parcelSummary(st, today);
-  let html = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas e variáveis / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
+  const head = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas e variáveis / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
+  let html = `<div class="newrow"><button class="btn" id="fx-new">+ Despesa que se repete</button><button class="btn" id="fx-new-rec">+ Receita que se repete</button><button class="btn" id="fx-new-parc">+ Parcelado</button></div>`;
   html += jobsHTML(st);
   html += block('Despesas fixas', out.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, sem data para acabar, até você encerrar.')
     + block('Despesas variáveis', out.filter(x => x.r.kind === 'var'), 'Sempre existem, mas o valor muda. O previsto é a média dos 3 últimos meses pagos.')
     + block('Receitas fixas', inc.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, até você encerrar. A renda do emprego é corrigida pelo contracheque.')
     + block('Receitas variáveis', inc.filter(x => x.r.kind === 'var'), 'O previsto é a média dos 3 últimos meses recebidos.');
   if (!act.length) html += `<div class="card empty">Nenhuma conta fixa cadastrada.<br>Cadastre aqui ou, ao lançar, escolha a frequência "Fixa todo mês" ou "Todo mês, valor variável".</div>`;
-  html += `<div class="newrow"><button class="btn" id="fx-new">+ Despesa que se repete</button><button class="btn" id="fx-new-rec">+ Receita que se repete</button><button class="btn" id="fx-new-parc">+ Parcelado</button></div>
-    <p class="hint">Fixa ou de valor variável (luz, comissão). Em "Parcelado" você escolhe se é despesa, compra no cartão ou receita em parcelas. Uma conta que já está nos lançamentos pode ser vinculada: abra o lançamento e toque em "Vincular a…".</p>`;
+  html += `<p class="hint">Fixa ou de valor variável (luz, comissão). Em "Parcelado" você escolhe se é despesa, compra no cartão ou receita em parcelas. Uma conta que já está nos lançamentos pode ser vinculada: abra o lançamento e toque em "Vincular a…".</p>`;
   if (sug.length) html += `<div class="card"><h2>Encontradas no seu histórico</h2><p class="hint">Aparecem quase todo mês nos últimos 6 meses. Cadastre para o app prever os próximos meses.</p>
     <ul class="list wrap">${sug.map((x, i) => `<li><span class="t"><b>${esc(x.desc || (itemById(x.itemId) || {}).name || '')}</b><small>${x.kind === 'fixa' ? 'fixa' : `variável, de ${C.brl(x.min)} a ${C.brl(x.max)}`} · ${x.n} dos últimos 6 meses · dia ~${x.day}${accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ''}</small></span>
       <span class="num">${x.kind === 'var' ? '≈ ' : ''}${C.brl(x.amount)}</span><span class="row"><button class="btn small" data-ign="${i}">Ignorar</button><button class="btn small primary" data-sug="${i}">Cadastrar</button></span></li>`).join('')}</ul></div>`;
@@ -1845,7 +1874,7 @@ function fixasHTML(st) {
     <ul class="list wrap">${P.map(p => `<li data-ptx="${p.firstId}"><span class="t"><b>${esc(p.desc)}</b><small>${esc((accById(p.accountId) || {}).name || '')} · faltam ${p.open} de ${p.n} · ${C.brl(p.parcel)} por mês · até ${shortM(p.until)}${p.prev ? ` · ${p.prev} prevista(s)` : ''}</small></span><span class="num">${C.brl(p.rest)}</span></li>`).join('')}</ul>`
     : '<p class="hint">Nenhuma compra parcelada em aberto. Ao lançar, escolha "Parcelada" (até 36x, no cartão ou na conta); ao importar uma fatura, as parcelas futuras entram como previstas.</p>'}</div>`;
   ui._sug = sug;
-  return html;
+  return { head, body: html };
 }
 
 function recSheet(id) {
@@ -2047,15 +2076,16 @@ function faturaSheet(cardId, comp) {
       <div class="month"><button data-c="-1" aria-label="Fatura anterior">‹</button><b>Fatura de ${C.monthLabel(comp).toLowerCase()}</b><button data-c="1" aria-label="Próxima fatura">›</button></div>
       <div class="kpis two"><div class="kpi"><small>Total</small><b class="num">${C.brl(f.total)}</b></div><div class="kpi"><small>Vencimento</small><b>${C.fmtD(f.date)}/${f.date.slice(0, 4)}</b></div></div>
       <p class="hint">${stTxt} · paga pela conta ${esc((accById(f.accountId) || {}).name || '—')}.</p>
-      ${(() => { const bh = PH.byHolder(S(), cardId, comp); return bh.length > 1 || (bh[0] && bh[0].h) ? `<h3 class="sub">Por cartão</h3><ul class="list calc">${bh.map(o => `<li><span class="grow">${o.h ? esc(PH.label(o.h)) + (o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : '') : 'Sem cartão cadastrado'} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>` : ''; })()}
-      ${f.payments.length ? `<h3 class="sub">Pagamentos</h3><ul class="list">${f.payments.map(t => txRow(t, true)).join('')}</ul>` : ''}
-      ${f.list.length ? `<h3 class="sub">Compras</h3><ul class="list">${f.list.map(t => txRow(t, true, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.</p>'}
-      <div class="actions wrap"><button class="btn" id="fa-edit">Editar cartão</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-imp">Importar</button>
-        ${f.total > 0 && !paid ? '<button class="btn primary" id="fa-reg">Registrar pagamento</button>' : ''}
-        ${f.list.length ? `<button class="btn" id="fa-pay">${f.manual ? 'Desmarcar paga' : paid ? '' : 'Marcar paga sem registrar'}</button>`.replace('<button class="btn" id="fa-pay"></button>', '') : ''}</div>
+      <div class="acts">${f.total > 0 && !paid ? '<button class="btn primary" id="fa-reg">Registrar pagamento</button>' : ''}
+        <button class="btn" id="fa-imp">Importar</button><button class="btn" id="fa-new">+ Compra</button><button class="btn" id="fa-edit">Editar cartão</button></div>
       ${M.isSkipped(S(), cardId, comp) ? `<div class="card flat"><p class="hint"><b>O cartão não gerou esta fatura</b> (mudança de vencimento). As compras deste período, as parcelas e os pagamentos ficam na fatura de ${shortM(M.skipComp(S(), cardId, comp))}.</p><button class="btn small" id="fa-unskip">Desfazer: esta fatura existiu</button></div>`
         : (f.list.length && f.list.every(t => t.prev)) || (!f.list.length && f.payments.length) ? `<p class="hint">Só há parcelas previstas${f.payments.length ? ' e pagamentos' : ''} nesta fatura. Se o cartão mudou o vencimento e pulou este mês, <button class="link" id="fa-skip">avise que esta fatura não existiu</button>: tudo passa para a fatura seguinte.</p>` : ''}
-      ${!paid && f.total > 0 ? '<p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" não mexe no saldo: serve para faturas pagas antes de você começar a usar o app. Se o pagamento já está nos lançamentos como despesa (um Pix para o banco do cartão), abra-o e toque em "Vincular a…".</p>' : ''}`;
+      ${f.list.length && (f.manual || !paid) ? `<details class="more"><summary>${f.manual ? 'Fatura marcada como paga' : 'Já paguei e não quero registrar'}</summary>
+        <p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" não mexe no saldo: serve para faturas pagas antes de você começar a usar o app. Se o pagamento já está nos lançamentos como despesa (um Pix para o banco do cartão), abra-o e toque em "Vincular a…".</p>
+        <button class="btn small" id="fa-pay">${f.manual ? 'Desmarcar paga' : 'Marcar paga sem registrar'}</button></details>` : ''}
+      ${(() => { const bh = PH.byHolder(S(), cardId, comp); return bh.length > 1 || (bh[0] && bh[0].h) ? `<h3 class="sub">Por cartão</h3><ul class="list calc">${bh.map(o => `<li><span class="grow">${o.h ? esc(PH.label(o.h)) + (o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : '') : 'Sem cartão cadastrado'} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>` : ''; })()}
+      ${f.payments.length ? `<h3 class="sub">Pagamentos</h3><ul class="list">${f.payments.map(t => txRow(t, true)).join('')}</ul>` : ''}
+      ${f.list.length ? `<h3 class="sub">Compras (${f.list.length})</h3><ul class="list">${f.list.map(t => txRow(t, true, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.<br>Toque em <b>Importar</b> para trazer o PDF ou o CSV da fatura.</p>'}`;
     panel.onclick = async e => {
       const b = e.target.closest('[data-c]'); if (b) { comp = C.mAdd(comp, +b.dataset.c); return faturaSheet(cardId, comp); }
       const li = e.target.closest('[data-tx]'); if (li) return txSheet(S().tx.find(t => t.id === li.dataset.tx));
@@ -2291,6 +2321,21 @@ function syncBoxHTML() {
   return `<p class="hint">${esc(msg)}<br>Última sincronização: ${esc(when)}${info.dirty ? ' · há alterações a enviar' : ''}</p>`;
 }
 
+/* aparência: claro, escuro ou automático, e o estilo visual (cores, letra e cantos). Vale só para o aparelho. */
+const LOOKS = [
+  { k: 'mata', name: 'Mata', hint: 'verde e limão', h: '#0b5d4a', b: '#f1f5f1', c: '#c8f25c', f: 'Figtree', r: '5px' },
+  { k: 'ameixa', name: 'Ameixa', hint: 'roxo e damasco', h: '#4b2170', b: '#f6f2f8', c: '#ffb24d', f: 'Plus Jakarta Sans', r: '8px' },
+  { k: 'mare', name: 'Maré', hint: 'petróleo e coral', h: '#0c4a5f', b: '#eff4f6', c: '#ff8562', f: 'Nunito', r: '4px' }
+];
+function lookCardHTML() {
+  const t = window.FIN_THEME.get();
+  return `<div class="card" id="look-card"><h2>Aparência</h2>
+    <div class="seg" id="th-mode">${[['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, l]) => `<button data-thm="${k}" aria-pressed="${t.mode === k}">${l}</button>`).join('')}</div>
+    <p class="hint">${t.mode === 'auto' ? 'Automático: acompanha o modo claro ou escuro do aparelho.' : t.mode === 'dark' ? 'Sempre escuro, mesmo com o aparelho no modo claro.' : 'Sempre claro, mesmo com o aparelho no modo escuro.'}</p>
+    <div class="looks">${LOOKS.map(o => `<button class="look" data-look="${o.k}" aria-pressed="${t.style === o.k}" style="--ph:${o.h};--pb:${o.b};--pc:${o.c};--pk:#fff;--pr:${o.r};--pf:'${o.f}',sans-serif"><span class="pv"><u></u><i></i></span>${o.name}<small>${o.hint}</small></button>`).join('')}</div>
+    <p class="hint">O estilo muda as cores, a letra e o formato dos botões. Vale só para este aparelho.</p></div>`;
+}
+
 function pageAjustes() {
   const st = S(), info = sync.syncInfo();
   const signed = auth.isSignedIn();
@@ -2298,6 +2343,7 @@ function pageAjustes() {
     <div class="card"><h2>Conta Google</h2><p class="hint">${info.email ? `Dados guardados no Drive de <b>${esc(info.email)}</b>, pasta <b>${esc(drive.FOLDER)}</b>.` : (signed ? 'Conectado. Identificando a conta…' : 'Não conectado neste momento. Os dados continuam salvos neste aparelho.')}</p>
       <div id="syncBox">${syncBoxHTML()}</div>
       <div class="row"><button class="btn" data-act="sync">Sincronizar agora</button>${signed ? '' : '<button class="btn primary" data-act="reconnect">Reconectar</button>'}</div></div>
+    ${lookCardHTML()}
     ${securityCardHTML()}
     <div class="card"><h2>CPF para faturas com senha</h2>
       <p class="hint">${st.profile.cpf6 ? 'Cadastrado (6 primeiros dígitos).' : 'Não cadastrado. Faturas com senha vão pedir a senha toda vez.'}</p>
@@ -2315,6 +2361,8 @@ function pageAjustes() {
   $('#impfile').onchange = ev => importFile(ev.target.files[0], false);
   bindSecurity();
   $('#page').onclick = async e => {
+    const th = e.target.closest('[data-thm]'), lk = e.target.closest('[data-look]');
+    if (th || lk) { const y = window.scrollY; window.FIN_THEME.set(th ? 'mode' : 'style', th ? th.dataset.thm : lk.dataset.look); pageAjustes(); window.scrollTo(0, y); return; }
     const b = e.target.closest('[data-act]'); if (!b) return;
     const a = b.dataset.act;
     if (['pin', 'lockoff', 'bio', 'bknow', 'bklist'].includes(a)) return securityAction(a);

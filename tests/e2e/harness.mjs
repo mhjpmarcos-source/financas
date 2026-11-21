@@ -46,7 +46,8 @@ export function createDrive() {
 }
 
 export async function newDevice(browser, devices, base, drive, label) {
-  const ctx = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'allow' });
+  // sem animações: os testes clicam assim que a folha abre
+  const ctx = await browser.newContext({ ...devices['iPhone 13'], serviceWorkers: 'allow', reducedMotion: 'reduce' });
   const page = await ctx.newPage(); const errs = [];
   page.on('pageerror', e => errs.push(label + ': ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errs.push(label + ' console: ' + m.text()); });
