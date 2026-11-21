@@ -412,3 +412,74 @@ export function icsPendings(S, { until, hour = 9, appName = 'Níquel' } = {}) {
   lines.push('END:VCALENDAR');
   return lines.map(l => l.length > 74 ? l.match(/.{1,73}/g).join('\r\n ') : l).join('\r\n') + '\r\n';
 }
+
+/* ----- assinaturas no cartão -----
+   Mais solta que detectRecurring (que pede 3 meses): compra no cartão do mesmo lugar em 2 faturas seguidas com valor parecido,
+   ou uma compra só quando o nome é de serviço por assinatura. A pessoa confirma ("É assinatura") ou dispensa; nada é criado sozinho.
+   Devolve o mesmo formato de detectRecurring, com sub: true. */
+const SUB_NAMES = /NETFLIX|SPOTIFY|DISNEY|\bHBO\b|\bMAX\b|PRIME ?VIDEO|AMAZON ?PRIME|YOUTUBE|GLOBOPLAY|PARAMOUNT|APPLE ?\.? ?COM|ICLOUD|APPLE ?(TV|MUSIC|ONE)|GOOGLE ?(ONE|STORAGE|PLAY)|DEEZER|\bUOL\b|MICROSOFT|OFFICE ?365|ADOBE|OPENAI|CHATGPT|CLAUDE|CANVA|DROPBOX|CRUNCHYROLL|KINDLE|AUDIBLE|TELECINE|PREMIERE|ASSINATURA|MENSALIDADE|\bCLUBE\b|GYMPASS|WELLHUB|SMART ?FIT|ACADEMIA/;
+export function detectSubs(S, today = M.todayISO()) {
+  const cur = today.slice(0, 7), months = Array.from({ length: 5 }, (_, i) => mAdd(cur, -3 + i)); // cartão: a fatura aberta pode ser a do mês que vem
+  const ign = new Set((S.config && S.config.recIgnore) || []);
+  const known = new Set(detectRecurring(S, today).map(x => x.key));
+  const groups = new Map();
+  S.tx.forEach(t => {
+    if (t.type !== 'cred' || t.recId || t.seriesId || t.parcKey || t.loanId || t.prev || t.reimb || t.amount <= 0 || !t.desc) return;
+    const m = txComp(S, t); if (!months.includes(m)) return;
+    const words = M.normDesc(t.desc.replace(/\(\d+\/\d+\)/, '')).split(' ').filter(w => w.length > 1 && !/^\d+$/.test(w)).slice(0, 3).join(' ');
+    if (!words) return;
+    const key = 'out|' + words;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ t, m });
+  });
+  const out = [];
+  groups.forEach((list, key) => {
+    if (ign.has(key) || known.has(key)) return;
+    const per = {}; list.forEach(({ t, m }) => { per[m] = (per[m] || 0) + t.amount; });
+    const ms = Object.keys(per).sort(), v = ms.map(m => r2(per[m])), avg = v.reduce((s, x) => s + x, 0) / v.length, mn = Math.min(...v), mx = Math.max(...v);
+    const last = list.slice().sort((a, b) => a.t.date < b.t.date ? 1 : -1)[0].t;
+    const named = SUB_NAMES.test(last.desc.toUpperCase());
+    const recent = ms[ms.length - 1] >= mAdd(cur, -1);
+    const twoInRow = ms.length >= 2 && ms.some((m, i) => i && mAdd(ms[i - 1], 1) === m) && list.length <= ms.length && (mx - mn) <= avg * 0.15;
+    if (!recent || !(twoInRow || named)) return;
+    const fixa = mx - mn <= Math.max(0.01, avg * 0.01);
+    const daysL = list.map(({ t }) => +t.date.slice(8, 10)).sort((a, b) => a - b);
+    out.push({ key, sub: true, named, kind: fixa ? 'fixa' : 'var', type: 'cred', desc: last.desc.replace(/\s*\(\d+\/\d+\)\s*$/, ''), itemId: last.itemId, accountId: last.accountId,
+      amount: fixa ? v[v.length - 1] : r2(avg), min: mn, max: mx, n: ms.length, day: daysL[Math.floor(daysL.length / 2)], lastM: ms[ms.length - 1], txIds: list.map(({ t }) => t.id) });
+  });
+  return out.sort((a, b) => b.amount - a.amount);
+}
+
+/* ----- renda comprometida -----
+   Para cada um dos n meses a partir de `from`: a renda prevista e quanto dela já tem destino, por tipo de compromisso.
+   Usa a mesma regra do resumo do mês (cartão pela fatura; pagamento de fatura e transferência fora; o que a folha paga entra
+   na renda e na despesa). `ends` lista o que termina naquele mês (última parcela), isto é, quanto fica livre no mês seguinte. */
+export const COMMIT_KINDS = [['folha', 'Descontado na folha', '#7b55c7'], ['fixas', 'Contas fixas e assinaturas', '#1e88e5'], ['variaveis', 'Contas de valor variável', '#00897b'],
+  ['parcelas', 'Parcelas', '#e98b3a'], ['dividas', 'Dívidas', '#d9534f'], ['outros', 'Outros lançamentos do mês', '#90a4ae']];
+export function committed(S, from, n = 12) {
+  const months = Array.from({ length: n }, (_, i) => mAdd(from, i)), idx = Object.fromEntries(months.map((m, i) => [m, i]));
+  const rows = months.map(m => ({ m, renda: 0, parts: { folha: 0, fixas: 0, variaveis: 0, parcelas: 0, dividas: 0, outros: 0 }, ends: [] }));
+  const recKind = Object.fromEntries((S.rec || []).map(r => [r.id, r.kind]));
+  const lastOfLoan = {};
+  S.tx.forEach(t => { if (t.loanId && t.type === 'deb') { const m = mOf(t.date); if (!lastOfLoan[t.loanId] || m > lastOfLoan[t.loanId]) lastOfLoan[t.loanId] = m; } });
+  S.tx.forEach(t => {
+    if (t.adj || t.reimb || t.cardPay || t.type === 'trf') return;
+    if (t.type === 'cred' && isThird(S, t)) return;
+    const m = t.type === 'cred' ? txComp(S, t) : mOf(t.date), R = rows[idx[m]]; if (!R) return;
+    if (t.type === 'rec') { R.renda += t.amount; return; }
+    const parc = t.parcKey ? [t.parcI, t.parcN] : t.seriesId && t.seriesKind !== 'rep' ? [t.seriesIdx, t.seriesN] : null;
+    const k = t.folha ? 'folha' : t.loanId ? 'dividas' : parc ? 'parcelas' : t.recId ? (recKind[t.recId] === 'var' ? 'variaveis' : 'fixas') : 'outros';
+    R.parts[k] += t.amount; if (t.folha) R.renda += t.amount;
+    const name = (t.desc || '').replace(/\s*\(\d+\/\d+\)\s*$/, '');
+    if (parc && parc[1] && parc[0] === parc[1]) R.ends.push({ desc: name, amount: t.amount, what: `última parcela (${parc[1]}/${parc[1]})` });
+    else if (t.loanId && lastOfLoan[t.loanId] === m) {
+      const loan = (S.loans || []).find(l => l.id === t.loanId);
+      // consignado: a agenda vai só até o horizonte da previsão; a última linha só é o fim de verdade quando cai antes dele
+      if (loan && !(loan.folha && m >= months[n - 1]) && !(loan.folha && m >= mAdd(M.todayISO().slice(0, 7), M.REC_AHEAD))) R.ends.push({ desc: [loan.person, loan.desc].filter(Boolean).join(' · ') || name, amount: t.amount, what: 'última parcela da dívida' });
+    }
+  });
+  return rows.map(R => {
+    const parts = Object.fromEntries(Object.entries(R.parts).map(([k, v]) => [k, r2(v)])), total = r2(Object.values(parts).reduce((s, x) => s + x, 0)), renda = r2(R.renda);
+    return { m: R.m, renda, parts, total, sobra: r2(renda - total), pct: renda > 0 ? Math.round(total / renda * 100) : null, ends: R.ends.sort((a, b) => b.amount - a.amount) };
+  });
+}

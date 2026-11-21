@@ -7,7 +7,8 @@ Controle financeiro pessoal, gratuito, que roda no navegador e guarda os dados n
 - O app só enxerga os arquivos que ele mesmo criou no Drive (permissão `drive.file`).
 - Funciona sem internet: tudo fica salvo no aparelho e vai para o Drive quando a conexão volta. Se dois aparelhos alterarem ao mesmo tempo, as alterações são juntadas lançamento a lançamento.
 
-**Versão atual: 0.13.1.** Novidades:
+**Versão atual: 0.14.0.** Novidades:
+- **0.14.0:** **Futuro** (Resumo › Futuro): para cada um dos próximos 12 meses, a renda prevista e quanto dela já tem destino (descontos em folha, contas fixas e assinaturas, contas variáveis, parcelas e dívidas), com o percentual, a sobra e o que termina em cada mês. **Assinaturas no cartão**: em Agenda › Fixas e parcelas, o app pergunta "É assinatura?" para compras que se repetem em duas faturas seguidas ou têm nome de serviço conhecido; confirmando, viram conta fixa no cartão. **Tutorial de primeiro uso** (também em Ajustes › Ajuda), **guia de uso** em perguntas e respostas e **política de privacidade** (`privacidade.html`). Ao puxar a tela no iPhone, o fundo é da cor do topo.
 - **0.13.1:** **Maré** passa a ser o estilo padrão (Mata e Ameixa continuam em Ajustes › Aparência) e o ícone ganha as cores dele; ao puxar a tela para baixo no iPhone, o fundo que aparece é da cor do topo.
 - **0.13.0:** **filtros nos Lançamentos** e **tela de computador**. Filtros: fila "Tudo · Receitas · Despesas · Cartão · Pendentes · Transferências · Sem categoria" e "Conta, categoria…" (conta ou cartão, grupo ou categoria, quem usou o cartão); valem para o mês e para a busca e mostram o total filtrado. Tocar em **Receitas** ou **Despesas** no alto filtra a lista; no Resumo, os mesmos números e cada categoria abrem os Lançamentos já filtrados. Computador: a partir de 760 px o menu vira um trilho à esquerda e as folhas abrem no centro; a partir de 1000 px, Lançamentos fica em duas colunas (lista à esquerda; mês, números e atalhos presos à direita) e os blocos das outras telas ficam lado a lado; a partir de 1280 px o menu lateral é completo; em monitores grandes o conteúdo alarga e Ajustes usa três colunas. Esc fecha a folha; realce ao passar o mouse.
 - **0.12.1:** o app passa a se chamar **Níquel** (antes "Finanças") e ganha ícone com a inicial. Nada muda nos dados: a pasta no Drive continua **Finanças (app)**, o arquivo continua `financas-dados.json` e o endereço do site é o mesmo.
@@ -120,6 +121,7 @@ Edite `config.js` e troque o `clientId` pelo seu. Se deixar vazio, o app pede o 
   - `holder.js` — quem usa cada cartão (portadores) e reembolso.
   - `link.js` — vínculos de lançamentos que já existem e a lista "para conferir".
   - `app.js` — telas.
+  - `help.js` — textos do tutorial e do guia de uso.
   - `theme.js` — aparência (claro/escuro/automático e estilo), carregado antes do CSS; as cores de cada estilo estão no começo de `style.css`.
   - `imp/` — importação: `pdftext.js` (texto e posição no PDF), `parse.js` (fatura × extrato, PDF/CSV/OFX), `classify.js` (categorias), `plan.js` (duplicatas e gravação).
 - Ao alterar qualquer arquivo, aumente `VERSION` em `sw.js`, senão os aparelhos continuam com a versão guardada.

@@ -66,5 +66,6 @@ export async function setup(p, { cpf = '', card = true } = {}) {
   await p.click('[data-wz=next]'); await p.click('[data-wz=next]');
   if (cpf) await p.fill('#cpf', cpf);
   await p.click('[data-wz=next]'); await p.click('[data-wz=finish]'); await p.waitForSelector('.tabs');
+  await p.click('.sheet.tour [data-tour=skip]'); // tutorial de primeiro uso (testado em ajuda.e2e.mjs)
 }
 export const wait = ms => new Promise(r => setTimeout(r, ms));

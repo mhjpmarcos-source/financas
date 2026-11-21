@@ -13,8 +13,9 @@ import * as PP from './imp/parcelas.js';
 import * as H from './imp/holerite.js';
 import * as L from './link.js';
 import * as PH from './holder.js';
+import { TOUR, GUIDE } from './help.js';
 
-export const VERSION = '0.13.1';
+export const VERSION = '0.14.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -162,7 +163,8 @@ function screenWelcome() {
     <p>Seu controle financeiro, com os dados guardados no <b>seu</b> Google Drive. Ninguém mais tem acesso.</p>
     <button class="btn primary block" id="login" style="margin-top:18px">Entrar com o Google</button>
     <p class="hint" id="offmsg">${navigator.onLine ? '' : 'Sem internet. Conecte-se para o primeiro acesso.'}</p>
-    <p class="hint">O app cria a pasta <b>Finanças (app)</b> no seu Drive e só enxerga os arquivos dela.</p></div>`;
+    <p class="hint">O app cria a pasta <b>Finanças (app)</b> no seu Drive e só enxerga os arquivos dela.</p>
+    <p class="hint"><a class="link" href="privacidade.html">Política de privacidade</a></p></div>`;
   $('#login').onclick = () => doLogin(true).then(ok => { if (ok) firstAccess(); });
 }
 
@@ -315,13 +317,14 @@ async function finishWizard() {
   ui.month = M.todayISO().slice(0, 7);
   toast('Tudo pronto. Seus dados estão sendo salvos no Drive.');
   render();
+  tourSheet();
 }
 
 /* ---------- telas principais ---------- */
 function render() {
   if (!S() || !S().config.setupDone) return route();
   const tabs = [['lanc', 'Lançamentos'], ['agenda', 'Agenda'], ['resumo', 'Resumo'], ['contas', 'Contas'], ['ajustes', 'Ajustes']];
-  const title = ui.sub === 'cats' ? 'Categorias' : { lanc: 'Lançamentos', agenda: 'Agenda', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
+  const title = ui.sub === 'cats' ? 'Categorias' : ui.sub === 'help' ? 'Ajuda' : { lanc: 'Lançamentos', agenda: 'Agenda', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
   app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="eye" id="eye" aria-label="Esconder ou mostrar os valores"></button><button class="chip" id="chip"><i></i><span></span></button></header>
     <main class="page" id="page"></main>
     ${ui.tab !== 'ajustes' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento"><span aria-hidden="true">+</span><b>Novo lançamento</b></button>' : ''}
@@ -332,6 +335,7 @@ function render() {
   if ($('#back')) $('#back').onclick = () => { ui.sub = null; render(); };
   if ($('#fab')) $('#fab').onclick = () => txSheet();
   if (ui.sub === 'cats') pageCategorias();
+  else if (ui.sub === 'help') pageAjuda();
   else ({ lanc: pageLanc, agenda: pageAgenda, resumo: pageResumo, contas: pageContas, ajustes: pageAjustes })[ui.tab]();
   renderChip(sync.currentStatus());
   updateBadge();
@@ -1507,9 +1511,10 @@ function downloadFile(name, text, type) {
 
 function pageResumo() {
   const view = ui.rsView || 'mes';
-  const seg = `<div class="seg" id="rsseg">${[['mes', 'Mês'], ['orc', 'Orçamento'], ['ano', 'Ano']].map(([k, l]) => `<button data-rv="${k}" aria-pressed="${view === k}">${l}</button>`).join('')}</div>`;
+  const seg = `<div class="seg" id="rsseg">${[['mes', 'Mês'], ['orc', 'Orçamento'], ['ano', 'Ano'], ['fut', 'Futuro']].map(([k, l]) => `<button data-rv="${k}" aria-pressed="${view === k}">${l}</button>`).join('')}</div>`;
   if (view === 'orc') return pageOrcamento(seg);
   if (view === 'ano') return pageAno(seg);
+  if (view === 'fut') return pageFuturo(seg);
   const st = S(), m = ui.month;
   const sum = C.monthSummary(st, m), cats = C.byCategory(st, m), recs = C.byCategory(st, m, 'receita'), inv = C.invFlow(st, m);
   const series = C.monthSeries(st, m, 6);
@@ -1538,6 +1543,31 @@ function pageResumo() {
       <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
     <div class="card"><h2>Receitas</h2>${catHTML(recs, sum.rec || 1, 'rec')}</div></div></div>`;
   bindResumo(pageResumo);
+}
+
+/* Futuro: quanto da renda prevista de cada um dos próximos 12 meses já tem destino */
+function pageFuturo(seg) {
+  const st = S(), cur = M.todayISO().slice(0, 7), rows = C.committed(st, cur, M.REC_AHEAD + 1);
+  const K = C.COMMIT_KINDS, nx = rows[1] || rows[0];
+  const withR = rows.filter(r => r.renda > 0), avg = withR.length ? Math.round(withR.reduce((s, r) => s + r.pct, 0) / withR.length) : null;
+  const bar = r => { const base = Math.max(r.renda, r.total, 1); return `<span class="cbar">${K.map(([k, , c]) => r.parts[k] ? `<i style="width:${(r.parts[k] / base * 100).toFixed(1)}%;background:${c}"></i>` : '').join('')}</span>`; };
+  const ends = rows.flatMap(r => r.ends.map(e => ({ ...e, m: r.m })));
+  const subs = C.detectSubs(st).length;
+  $('#page').innerHTML = `<div class="hcard">${seg}<small class="lbl">${nx.renda > 0 ? `Em ${C.monthLabel(nx.m).toLowerCase()}, já tem destino` : 'Renda comprometida'}</small>
+      <span class="big" id="fu-pct">${nx.pct == null ? '—' : nx.pct + '% da renda'}</span>
+      <div class="kpis two"><div class="kpi"><small>Renda prevista</small><b class="num pos">${C.brl(nx.renda)}</b></div><div class="kpi"><small>${nx.sobra < 0 ? 'Falta' : 'Sobra prevista'}</small><b class="num ${nx.sobra < 0 ? 'neg' : ''}">${C.brl(Math.abs(nx.sobra))}</b></div></div>
+      <p class="hint">${avg == null ? 'Cadastre a renda (contracheque ou receita que se repete) para ver o percentual.' : `Média dos próximos meses: ${avg}% da renda prevista.`}</p></div>
+    ${subs ? `<button class="banner" id="fu-subs"><span class="grow"><b>${subs} compra${subs > 1 ? 's' : ''} no cartão parece${subs > 1 ? 'm' : ''} assinatura</b><small>Confirme para entrarem na conta dos próximos meses</small></span><span aria-hidden="true">›</span></button>` : ''}
+    <div class="cols"><div class="card"><h2>Mês a mês</h2><p class="legend wrapl">${K.map(([, l, c]) => `<span><span class="sw" style="background:${c}"></span> ${l}</span>`).join('')}</p>
+      ${rows.map((r, i) => `<details class="cmp" ${i === 1 ? 'open' : ''}><summary><span class="cm"><b>${shortM(r.m)}</b>${r.ends.length ? `<small>${r.ends.length} termina${r.ends.length > 1 ? 'm' : ''}</small>` : ''}</span>${bar(r)}<span class="num cp ${r.pct != null && r.pct > 100 ? 'neg' : ''}">${r.pct == null ? '—' : r.pct + '%'}</span></summary>
+        <ul class="sublist calc"><li><span class="grow">Renda prevista</span><span class="num pos">${C.brl(r.renda)}</span></li>
+          ${K.map(([k, l, c]) => r.parts[k] ? `<li><span class="grow"><span class="sw" style="background:${c}"></span> ${l}</span><span class="num">−${C.brl(r.parts[k])}</span></li>` : '').join('')}
+          <li class="tot"><span class="grow">${r.sobra < 0 ? 'Falta' : 'Sobra'}</span><span class="num ${r.sobra < 0 ? 'neg' : ''}">${C.brl(Math.abs(r.sobra))}</span></li></ul>
+        ${r.ends.length ? `<p class="hint">Termina neste mês: ${r.ends.map(e => `${esc(e.desc)} (${C.brl(e.amount)})`).join('; ')}.</p>` : ''}</details>`).join('')}</div>
+    <div><div class="card"><h2>O que termina</h2>${ends.length ? `<p class="hint">A partir do mês seguinte, o valor deixa de pesar.</p><ul class="list wrap">${ends.map(e => `<li style="cursor:default"><span class="t"><b>${esc(e.desc)}</b><small>${shortM(e.m)} · ${e.what}</small></span><span class="num pos">+${C.brl(e.amount)}/mês</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma parcela ou dívida termina nos próximos 12 meses.</p>'}</div>
+    <div class="card flat"><h2>Como ler</h2><p class="hint">Conta o que já está no app para cada mês: descontos em folha, contas fixas e assinaturas, contas de valor variável (pela média), parcelas no cartão e na conta, e parcelas de dívidas. Gastos do dia a dia que ainda não aconteceram não entram, então a sobra é o que resta para eles. A renda e as contas fixas são previstas até ${shortM(C.mAdd(cur, M.REC_AHEAD))}.</p></div></div></div>`;
+  bindResumo(() => pageFuturo(seg));
+  const sb = $('#fu-subs'); if (sb) sb.onclick = e => { e.stopPropagation(); ui.tab = 'agenda'; ui.agView = 'fix'; render(); const c = $('#subs-card'); if (c) c.scrollIntoView({ block: 'center' }); };
 }
 
 function bindResumo(redraw) {
@@ -1925,7 +1955,7 @@ function fixasHTML(st) {
       <span class="t"><b>${esc(r.desc || (it ? it.name : ''))}</b><small>dia ${r.day}${acc ? ' · ' + esc(acc.name) : ''}${r.person ? ' · Pix' : ''}${ended ? ` · encerrada em ${shortM(r.end)}` : r.end ? ` · até ${shortM(r.end)}` : ''}${r.kind === 'var' && s.n > 1 ? ` · média ${C.brl(s.avg3)} (de ${C.brl(s.min)} a ${C.brl(s.max)})` : r.kind === 'var' && s.n ? (r.type === 'rec' ? ' · 1 mês recebido' : ' · 1 mês pago') : r.kind === 'var' ? ' · estimativa' : ''}</small></span>
       <span class="num ${r.type === 'rec' ? 'pos' : ''}">${r.kind === 'var' ? '≈ ' : ''}${C.brl(est)}</span></li>`; };
   const block = (title, list, hint) => list.length ? `<div class="card"><h2>${title} <span class="hint">(${list.length})</span></h2>${hint ? `<p class="hint">${hint}</p>` : ''}<ul class="list wrap">${list.map(row).join('')}</ul></div>` : '';
-  const sug = C.detectRecurring(st, today);
+  const sug = C.detectRecurring(st, today), subs = C.detectSubs(st, today), allSug = [...sug, ...subs];
   const P = C.parcelSummary(st, today);
   const head = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas e variáveis / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
   let html = `<div class="newrow"><button class="btn" id="fx-new">+ Despesa que se repete</button><button class="btn" id="fx-new-rec">+ Receita que se repete</button><button class="btn" id="fx-new-parc">+ Parcelado</button></div>`;
@@ -1936,13 +1966,16 @@ function fixasHTML(st) {
     + block('Receitas variáveis', inc.filter(x => x.r.kind === 'var'), 'O previsto é a média dos 3 últimos meses recebidos.');
   if (!act.length) html += `<div class="card empty">Nenhuma conta fixa cadastrada.<br>Cadastre aqui ou, ao lançar, escolha a frequência "Fixa todo mês" ou "Todo mês, valor variável".</div>`;
   html += `<p class="hint">Fixa ou de valor variável (luz, comissão). Em "Parcelado" você escolhe se é despesa, compra no cartão ou receita em parcelas. Uma conta que já está nos lançamentos pode ser vinculada: abra o lançamento e toque em "Vincular a…".</p>`;
+  if (subs.length) html += `<div class="card" id="subs-card"><h2>Parecem assinaturas no cartão <span class="hint">(${subs.length})</span></h2><p class="hint">Compras que se repetem na fatura ou têm nome de serviço por assinatura. Confirmando, viram conta fixa no cartão: os próximos meses ficam previstos nas faturas e entram em Resumo › Futuro.</p>
+    <ul class="list wrap">${subs.map((x, i) => `<li><span class="t"><b>${esc(x.desc)}</b><small>${esc((accById(x.accountId) || {}).name || '')} · ${x.n > 1 ? `${x.n} faturas seguidas` : 'apareceu 1 vez'}${x.kind === 'var' ? ` · de ${C.brl(x.min)} a ${C.brl(x.max)}` : ''}</small></span>
+      <span class="num">${x.kind === 'var' ? '≈ ' : ''}${C.brl(x.amount)}</span><span class="row"><button class="btn small" data-ign="${sug.length + i}">Não é</button><button class="btn small primary" data-sug="${sug.length + i}">É assinatura</button></span></li>`).join('')}</ul></div>`;
   if (sug.length) html += `<div class="card"><h2>Encontradas no seu histórico</h2><p class="hint">Aparecem quase todo mês nos últimos 6 meses. Cadastre para o app prever os próximos meses.</p>
     <ul class="list wrap">${sug.map((x, i) => `<li><span class="t"><b>${esc(x.desc || (itemById(x.itemId) || {}).name || '')}</b><small>${x.kind === 'fixa' ? 'fixa' : `variável, de ${C.brl(x.min)} a ${C.brl(x.max)}`} · ${x.n} dos últimos 6 meses · dia ~${x.day}${accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ''}</small></span>
       <span class="num">${x.kind === 'var' ? '≈ ' : ''}${C.brl(x.amount)}</span><span class="row"><button class="btn small" data-ign="${i}">Ignorar</button><button class="btn small primary" data-sug="${i}">Cadastrar</button></span></li>`).join('')}</ul></div>`;
   html += `<div class="card"><h2>Parcelados <span class="hint">(${P.length})</span></h2>${P.length ? `<p class="hint">Faltam ${C.brl(P.reduce((s, p) => s + p.rest, 0))} no total. Parcelas "previstas" vêm de faturas importadas e são trocadas pelas reais quando a fatura seguinte chega.</p>
     <ul class="list wrap">${P.map(p => `<li data-ptx="${p.firstId}"><span class="t"><b>${esc(p.desc)}</b><small>${esc((accById(p.accountId) || {}).name || '')} · faltam ${p.open} de ${p.n} · ${C.brl(p.parcel)} por mês · até ${shortM(p.until)}${p.prev ? ` · ${p.prev} prevista(s)` : ''}</small></span><span class="num">${C.brl(p.rest)}</span></li>`).join('')}</ul>`
     : '<p class="hint">Nenhuma compra parcelada em aberto. Ao lançar, escolha "Parcelada" (até 36x, no cartão ou na conta); ao importar uma fatura, as parcelas futuras entram como previstas.</p>'}</div>`;
-  ui._sug = sug;
+  ui._sug = allSug;
   return { head, body: html + '</div>' };
 }
 
@@ -2001,7 +2034,7 @@ async function adoptSuggestion(x) {
     const r = M.newRec({ kind: x.kind, type: x.type, desc: x.desc || (itemById(x.itemId) || {}).name || '', itemId: x.itemId, accountId: x.accountId, amount: x.amount, day: x.day, start: C.mAdd(lastDate.slice(0, 7), 1) });
     r.words = M.normDesc(x.desc); s.rec.push(r); M.linkToRec(s, r, x.txIds); M.ensureRecurring(s);
   });
-  render(); toast(`${x.desc || 'Conta'} cadastrada como ${x.kind === 'fixa' ? 'fixa' : 'variável'}.`);
+  render(); toast(x.sub ? `${x.desc} cadastrada como assinatura.` : `${x.desc || 'Conta'} cadastrada como ${x.kind === 'fixa' ? 'fixa' : 'variável'}.`);
 }
 async function ignoreSuggestion(x) {
   await sync.commit(s => { s.config.recIgnore = [...new Set([...(s.config.recIgnore || []), x.key])]; s.config.upd = Date.now(); });
@@ -2390,6 +2423,30 @@ function syncBoxHTML() {
   return `<p class="hint">${esc(msg)}<br>Última sincronização: ${esc(when)}${info.dirty ? ' · há alterações a enviar' : ''}</p>`;
 }
 
+/* tutorial de primeiro uso: poucas telas, uma ideia por tela; aparece ao terminar a configuração e em Ajustes › Ajuda */
+function tourSheet() {
+  const old = document.querySelector('.sheet.tour'); if (old) old.remove();
+  const box = document.createElement('div'); box.className = 'sheet ask tour'; let i = 0;
+  const art = k => k === 'ola' ? '<img src="icons/icon-192.png?v=3" alt="">' : (QI[k] || ICON[k] || QI.plus);
+  const draw = () => { const s = TOUR[i], last = i === TOUR.length - 1;
+    box.innerHTML = `<div class="panel" role="dialog" aria-modal="true" aria-label="Tutorial"><div class="tart">${art(s.icon)}</div>
+      <h2>${s.title}</h2><p>${s.text}</p>
+      <div class="steps">${TOUR.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="actions">${last ? '' : '<button class="btn ghost" data-tour="skip">Pular</button>'}${i ? '<button class="btn" data-tour="back">Voltar</button>' : ''}<button class="btn primary" data-tour="${last ? 'skip' : 'next'}">${last ? 'Começar a usar' : 'Próximo'}</button></div></div>`; };
+  draw(); document.body.appendChild(box);
+  box.onclick = e => {
+    const b = e.target.closest('[data-tour]'); if (!b) { if (e.target === box) box.remove(); return; }
+    if (b.dataset.tour === 'skip') return box.remove();
+    i += b.dataset.tour === 'back' ? -1 : 1; draw();
+  };
+}
+function pageAjuda() {
+  $('#page').innerHTML = `<div class="card"><h2>Guia de uso</h2><p class="hint">Toque numa pergunta para abrir a resposta.</p>
+      <div class="row"><button class="btn small" id="hp-tour">Ver o tutorial de 1 minuto</button><a class="btn small" href="privacidade.html">Política de privacidade</a></div></div>
+    <div class="cgrid">${GUIDE.map(([t, qs]) => `<div class="card"><h2>${t}</h2>${qs.map(([q, a]) => `<details class="faq"><summary>${q}</summary><p>${a}</p></details>`).join('')}</div>`).join('')}</div>`;
+  $('#page').onclick = e => { if (e.target.id === 'hp-tour') tourSheet(); };
+}
+
 /* aparência: claro, escuro ou automático, e o estilo visual (cores, letra e cantos). Vale só para o aparelho. */
 const LOOKS = [
   { k: 'mare', name: 'Maré', hint: 'petróleo e coral', h: '#0c4a5f', b: '#eff4f6', c: '#ff8562', f: 'Nunito', r: '4px' },
@@ -2424,6 +2481,8 @@ function pageAjustes() {
     <div class="card"><h2>Exportar para planilha</h2><p class="hint">Lançamentos em CSV (abre no Excel, Numbers ou Google Planilhas): data, categoria, conta, valor com sinal, situação.</p>
       <div class="row"><select id="exp-y" style="flex:1">${expYears().map(y => `<option value="${y}">${y === 'all' ? 'Todos os lançamentos' : y}</option>`).join('')}</select><button class="btn" data-act="csv">Baixar CSV</button></div>
       <input type="file" id="impfile" accept=".json,application/json" hidden></div>
+    <div class="card" id="help-card"><h2>Ajuda</h2><p class="hint">Como usar cada parte do app e o que é feito com os seus dados.</p>
+      <div class="row"><button class="btn" data-act="guide">Guia de uso</button><button class="btn" data-act="tour">Ver o tutorial</button><a class="btn" href="privacidade.html">Política de privacidade</a></div></div>
     <div class="card"><h2>Este aparelho</h2><p class="hint">Sair desconecta o Google. Remover apaga a cópia deste aparelho; os dados continuam no Drive.</p>
       <div class="row"><button class="btn" data-act="logout">Sair</button><button class="btn danger" data-act="forget">Remover dados deste aparelho</button></div></div></div>
     <p class="hint" style="text-align:center">Níquel ${VERSION}</p>`;
@@ -2438,6 +2497,8 @@ function pageAjustes() {
     if (a === 'sync') { if (!auth.isSignedIn()) return reconnect(); sync.sync(); }
     if (a === 'reconnect') reconnect();
     if (a === 'cats') { ui.sub = 'cats'; render(); window.scrollTo(0, 0); }
+    if (a === 'guide') { ui.sub = 'help'; render(); window.scrollTo(0, 0); }
+    if (a === 'tour') tourSheet();
     if (a === 'cpf') cpfSheet();
     if (a === 'cpfdel') { if (await confirmBox('Remover o CPF? Faturas com senha vão pedir a senha.')) { await sync.commit(s => { s.profile = { cpf6: '', upd: Date.now() }; }); render(); } }
     if (a === 'export') exportBackup();

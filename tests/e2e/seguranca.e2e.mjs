@@ -24,12 +24,14 @@ await p.click('[data-act=bklist]'); await p.waitForSelector('[data-bk]');
 await p.screenshot({ path: SHOTS + '/bk-list.png' });
 const daily = Object.entries(drive.files).find(([, f]) => /^financas-\d{4}-\d{2}-\d{2}\.json$/.test(f.name))[0];
 await p.click(`[data-bk="${daily}"]`); await wait(1800);
-let s = await st(); assert.deepEqual(s.tx.map(t => t.amount).sort((a, b) => a - b), [10]);
-assert.equal(drive.current().tx.length, 1, 'Drive restaurado');
+// a cópia do dia é feita na primeira sincronização: conforme o instante, tem o lançamento de 10 ou ainda nenhum; nunca os de 20 e 30
+const inCopy = JSON.parse(drive.files[daily].content).tx.map(t => t.amount).sort((a, b) => a - b); assert(inCopy.length <= 1 && !inCopy.includes(20) && !inCopy.includes(30));
+let s = await st(); assert.deepEqual(s.tx.map(t => t.amount).sort((a, b) => a - b), inCopy);
+assert.equal(drive.current().tx.length, inCopy.length, 'Drive restaurado');
 assert(drive.backups().some(f => /antes-de-restaurar/.test(f.name)), 'cópia antes de restaurar');
 // segundo aparelho também fica com os dados restaurados
 const B = await newDevice(browser, devices, BASE, drive, 'B'); await B.page.click('#login'); await B.page.waitForSelector('.tabs', { timeout: 15000 }); await wait(1500);
-assert.equal((await B.page.evaluate(async () => (await import('./js/sync.js')).state())).tx.length, 1);
+assert.equal((await B.page.evaluate(async () => (await import('./js/sync.js')).state())).tx.length, inCopy.length);
 // modo discreto
 await p.click('[data-tab=ajustes]'); await p.click('#eye'); assert(await p.evaluate(() => document.body.classList.contains('discreet')));
 await p.click('[data-tab=resumo]'); await p.screenshot({ path: SHOTS + '/discreto.png' }); await p.click('#eye');
