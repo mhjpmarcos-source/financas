@@ -38,6 +38,7 @@ export const GUIDE = [
     ['Resultado é o mesmo que saldo?', 'Não. <b>Resultado</b> é receitas menos despesas do mês, incluindo o que ainda está previsto. <b>Saldo</b> é o dinheiro na conta e fica em Contas.'],
     ['Como defino um orçamento?', 'Resumo › Orçamento: toque numa categoria e diga quanto pretende gastar por mês, ou peça a sugestão pela média dos últimos 3 meses.'],
     ['O que a tela "Futuro" mostra?', 'Para cada um dos próximos 12 meses, a renda prevista e quanto dela já tem destino: descontos em folha, contas fixas e assinaturas, parcelas e dívidas. Mostra também o que termina em cada mês.'],
+    ['Onde vejo quanto tenho de parcelas, ou quanto cada pessoa gastou?', 'Em <b>Agenda › Painel</b>. Os atalhos do alto respondem às perguntas mais comuns (parcelas a pagar, quem usou o cartão, faturas por cartão, fixas e assinaturas, dívidas); em "Ajustar" você escolhe o que somar, o período, como separar e os filtros. Tocar num mês abre os lançamentos daquele recorte.'],
     ['Como filtro os lançamentos?', 'Em Lançamentos, use a fila Tudo · Receitas · Despesas… e "Conta, categoria…". Tocar em Receitas ou Despesas no alto também filtra.']
   ]],
   ['Segurança e cópias', [

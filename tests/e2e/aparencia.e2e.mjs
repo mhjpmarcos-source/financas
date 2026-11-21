@@ -105,6 +105,13 @@ for (const [vw, vh] of [[834, 1112], [1024, 768], [1280, 800], [1440, 900], [172
   await p.keyboard.press('Escape'); assert.equal(await p.isHidden('#sheet'), true, 'Esc fecha a folha');
 }
 
+// celular deitado (iPhone grande: 932 × 430, e menor: 844 × 390): as cinco abas cabem no trilho, sem cortar a última
+for (const [vw, vh] of [[932, 430], [844, 390], [956, 440]]) {
+  await p.setViewportSize({ width: vw, height: vh }); await wait(80);
+  const last = await p.locator('.tabs [data-tab=ajustes]').boundingBox(); assert(last.y + last.height <= vh + 0.5, `aba Ajustes inteira na tela (${vw}×${vh}: termina em ${Math.round(last.y + last.height)})`);
+  assert.deepEqual(await wide(), [], `largura deitado (${vw})`);
+}
+
 // o campo de data segue a largura dos outros campos
 await p.setViewportSize({ width: 390, height: 664 }); await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.waitForSelector('#f-date');
 const bw = async s => Math.round((await p.locator(s).boundingBox()).width); assert.equal(await bw('#f-date'), await bw('#f-desc'), 'data com a mesma largura da descrição'); await p.click('#sheet-x');
