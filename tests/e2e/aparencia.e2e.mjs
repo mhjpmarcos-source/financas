@@ -12,8 +12,8 @@ await setup(p);
 const html = a => p.evaluate(k => document.documentElement.getAttribute(k), a);
 const inView = async sel => { const b = await p.locator(sel).boundingBox(), v = p.viewportSize(); return !!b && b.y >= 0 && b.y + b.height <= v.height; };
 
-// padrão: automático, estilo Mata; acompanha o aparelho
-assert.equal(await html('data-style'), 'mata'); assert.equal(await html('data-mode'), 'light');
+// padrão: automático, estilo Maré; acompanha o aparelho
+assert.equal(await html('data-style'), 'mare'); assert.equal(await html('data-mode'), 'light');
 await p.emulateMedia({ colorScheme: 'dark' }); await wait(100); assert.equal(await html('data-mode'), 'dark', 'automático segue o aparelho');
 // escolha manual vence o aparelho e fica guardada
 await p.click('[data-tab=ajustes]'); await p.click('[data-thm=light]'); assert.equal(await html('data-mode'), 'light');
@@ -21,6 +21,7 @@ assert.equal(await p.getAttribute('[data-thm=light]', 'aria-pressed'), 'true');
 await p.click('[data-look=ameixa]'); assert.equal(await html('data-style'), 'ameixa');
 assert.match(await p.evaluate(() => getComputedStyle(document.body).fontFamily), /Jakarta/);
 const hero = () => p.evaluate(() => getComputedStyle(document.querySelector('.top')).backgroundColor);
+assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), await hero(), 'fundo de puxar a tela na cor do topo');
 const h1 = await hero(); await p.click('[data-look=mare]'); assert.notEqual(await hero(), h1, 'o estilo troca a cor do topo');
 assert.match(await p.getAttribute('meta[name=theme-color]', 'content'), /^#0c4a5f$/);
 await p.reload(); await p.waitForSelector('.tabs');

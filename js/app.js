@@ -14,7 +14,7 @@ import * as H from './imp/holerite.js';
 import * as L from './link.js';
 import * as PH from './holder.js';
 
-export const VERSION = '0.13.0';
+export const VERSION = '0.13.1';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -2392,9 +2392,9 @@ function syncBoxHTML() {
 
 /* aparência: claro, escuro ou automático, e o estilo visual (cores, letra e cantos). Vale só para o aparelho. */
 const LOOKS = [
+  { k: 'mare', name: 'Maré', hint: 'petróleo e coral', h: '#0c4a5f', b: '#eff4f6', c: '#ff8562', f: 'Nunito', r: '4px' },
   { k: 'mata', name: 'Mata', hint: 'verde e limão', h: '#0b5d4a', b: '#f1f5f1', c: '#c8f25c', f: 'Figtree', r: '5px' },
-  { k: 'ameixa', name: 'Ameixa', hint: 'roxo e damasco', h: '#4b2170', b: '#f6f2f8', c: '#ffb24d', f: 'Plus Jakarta Sans', r: '8px' },
-  { k: 'mare', name: 'Maré', hint: 'petróleo e coral', h: '#0c4a5f', b: '#eff4f6', c: '#ff8562', f: 'Nunito', r: '4px' }
+  { k: 'ameixa', name: 'Ameixa', hint: 'roxo e damasco', h: '#4b2170', b: '#f6f2f8', c: '#ffb24d', f: 'Plus Jakarta Sans', r: '8px' }
 ];
 function lookCardHTML() {
   const t = window.FIN_THEME.get();

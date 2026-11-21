@@ -1,7 +1,7 @@
-/* Aparência: claro, escuro ou automático (segue o aparelho) e o estilo visual.
+/* Aparência: claro, escuro ou automático (segue o aparelho) e o estilo visual (Maré é o padrão).
    Fica por aparelho (não vai ao Drive). Carregado no <head>, antes do CSS pintar, para a tela não piscar na cor errada. */
 (function () {
-  var STYLES = ['mata', 'ameixa', 'mare'], MODES = ['auto', 'light', 'dark'];
+  var STYLES = ['mare', 'mata', 'ameixa'], MODES = ['auto', 'light', 'dark'];
   var BAR = { mata: ['#0b5d4a', '#0f2f27'], ameixa: ['#4b2170', '#2a163f'], mare: ['#0c4a5f', '#0d2f3b'] };
   var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   function read(k, list) { try { var v = localStorage.getItem(k); return list.indexOf(v) >= 0 ? v : list[0]; } catch (e) { return list[0]; } }
