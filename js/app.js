@@ -16,7 +16,7 @@ import * as PH from './holder.js';
 import { TOUR, GUIDE } from './help.js';
 import * as PN from './panel.js';
 
-export const VERSION = '0.16.0';
+export const VERSION = '0.17.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -121,7 +121,7 @@ document.addEventListener('click', e => {
 
 /* Esc fecha a caixa de pergunta ou a folha aberta (teclado do computador) */
 document.addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role=button][tabindex]')) { e.preventDefault(); return e.target.click(); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role=button][tabindex], [data-dr][tabindex]')) { e.preventDefault(); return e.target.click(); }
   if (e.key !== 'Escape' || document.body.classList.contains('locked')) return;
   const ask = document.querySelector('.sheet.ask'); if (ask) { ask.click(); return; }
   if (!$('#sheet').hidden) closeSheet();
@@ -644,7 +644,93 @@ function openSheet(html, bind) {
   sh.onclick = e => { if (e.target === sh || e.target.closest('#sheet-x')) closeSheet(); };
   bind(sh.querySelector('.panel'));
 }
-function closeSheet() { const sh = $('#sheet'); sh.hidden = true; sh.innerHTML = ''; }
+function closeSheet() {
+  const sh = $('#sheet'); sh.hidden = true; sh.innerHTML = '';
+  // um lançamento aberto a partir de uma lista de detalhe: ao fechar (ou salvar), a lista volta, já atualizada
+  const back = ui.reopen; ui.reopen = null; if (back) setTimeout(() => { if ($('#sheet').hidden) drillSheet(back); }, 0);
+}
+
+/* ===== Detalhe: todo número que soma lançamentos abre a lista deles =====
+   O elemento leva data-dr="<tipo>|<args>"; drillData monta título, lançamentos e o atalho para os Lançamentos já filtrados.
+   Tipos: sum (receitas ou despesas do mês ou do ano), cat e grp (categoria ou grupo), who (quem usou o cartão, numa fatura),
+   pay (forma de pagamento), fee (juros), inv (investimentos), fut (Futuro: renda ou um tipo de compromisso), plan (uma compra
+   parcelada), loan (dívida), rec (conta que se repete), bal (linha do saldo da conta), pend (a vencer), ids (lista guardada),
+   pn (somas por grupo, abre groupSheet). */
+const DRILL = {}; let drillSeq = 0;
+const keepIds = (title, ids, sub) => { const k = 'k' + (++drillSeq); DRILL[k] = { title, ids, sub }; return 'ids|' + k; };
+const monthsIn = m => m.length === 4 ? Array.from({ length: 12 }, (_, i) => m + '-' + String(i + 1).padStart(2, '0')) : [m];
+const perLabel = m => m.length === 4 ? 'em ' + m : 'em ' + C.monthLabel(m).toLowerCase();
+function drillData(spec) {
+  const st = S(), [k, a, b, c, d] = spec.split('|'), byId = id => st.tx.find(t => t.id === id);
+  const sumOf = (kind, m) => monthsIn(m).flatMap(mm => C.summaryTx(st, mm, kind));
+  const kindF = kind => kind === 'receita' ? 'rec' : 'desp', one = m => m.length === 7 ? m : null;
+  if (k === 'sum') return { title: a === 'receita' ? 'Receitas' : 'Despesas', sub: perLabel(b), list: sumOf(a, b).map(x => x.t), lanc: one(b) && { month: b, f: { kind: kindF(a) } } };
+  if (k === 'cat' || k === 'grp') {
+    const it = itemById(c), g = k === 'grp' && st.groups.find(x => x.id === c);
+    const list = sumOf(a, b).filter(x => k === 'cat' ? (x.itemId || '_') === c : c === '_' ? !itemById(x.itemId) : (itemById(x.itemId) || {}).groupId === c).map(x => x.t);
+    return { title: k === 'cat' ? (it ? it.name : 'Sem categoria') : (g ? g.name : 'Sem categoria'), sub: (a === 'receita' ? 'Receitas ' : 'Despesas ') + perLabel(b), list,
+      lanc: one(b) && { month: b, f: { kind: kindF(a), cat: c === '_' ? '_' : k === 'grp' ? 'g:' + c : c } } };
+  }
+  if (k === 'who') {
+    const card = accById(b), h = c && (card && card.holders || []).find(x => x.ref === c);
+    const list = st.tx.filter(t => t.type === 'cred' && t.accountId === b && C.txComp(st, t) === a && ((PH.holderOf(st, t) || {}).ref || '') === (c || ''));
+    return { title: h ? h.name : 'Sem nome cadastrado', sub: `${card ? card.name : 'Cartão'} · fatura de ${C.monthLabel(a).toLowerCase()}${h && h.reimb ? ' · devolve o dinheiro' : ''}`, list, lanc: c ? { month: a, f: { kind: 'cred', acc: b, who: b + '|' + c } } : null };
+  }
+  if (k === 'pay') {
+    const list = sumOf('despesa', a).map(x => x.t).filter(t => (t.folha ? 'folha' : C.payOf(st, t) || (t.type === 'cred' ? 'cartao' : 'outros')) === b);
+    const lab = { folha: 'Descontado na folha', cartao: 'Cartão de crédito', outros: 'Sem forma informada' }[b] || C.payLabel(b);
+    return { title: lab, sub: 'Despesas ' + perLabel(a), list, lanc: C.payLabel(b) ? { month: a, f: { kind: 'desp', pay: b } } : null };
+  }
+  if (k === 'fee') return { title: 'Juros e taxas', sub: perLabel(a) + ' · Pix parcelado ou no crédito', list: st.tx.filter(t => t.fee && (t.type === 'cred' ? C.txComp(st, t) : C.mOf(t.date)) === a) };
+  if (k === 'inv') { const inv = new Set(st.accounts.filter(x => x.inv).map(x => x.id)); return { title: 'Investimentos', sub: 'Aportes e resgates ' + perLabel(a), list: st.tx.filter(t => t.type === 'trf' && C.mOf(t.date) === a && inv.has(t.accountId) !== inv.has(t.toAccountId)) }; }
+  if (k === 'fut') { const K = (C.COMMIT_KINDS.find(x => x[0] === b) || [])[1]; return { title: b === 'renda' ? 'Renda prevista' : K, sub: perLabel(a), list: C.committedTx(st, a, b), asc: true,
+    lanc: { month: a, f: { kind: { renda: 'rec', parcelas: 'parc', fixas: 'fix', variaveis: 'fix', dividas: 'debt' }[b] || 'all' } } }; }
+  if (k === 'plan') { const list = st.tx.filter(t => (t.parcKey || t.seriesId) === a); const f0 = list[0]; return { title: f0 ? f0.desc.replace(/\s*\(\d+\/\d+\)\s*$/, '') : 'Compra parcelada', sub: `${(accById(f0 && f0.accountId) || {}).name || ''} · ${list.length} parcela${list.length === 1 ? '' : 's'}`, list, asc: true, months: true }; }
+  if (k === 'loan') { const l = st.loans.find(x => x.id === a); return { title: l ? [l.person, l.desc].filter(Boolean).join(' · ') : 'Dívida', sub: 'Parcelas', list: st.tx.filter(t => t.loanId === a), asc: true, months: true }; }
+  if (k === 'rec') { const r = (st.rec || []).find(x => x.id === a); return { title: r ? r.desc : 'Conta que se repete', sub: 'Todos os meses, pagos e previstos', list: st.tx.filter(t => t.recId === a), asc: true, months: true }; }
+  if (k === 'bal') { const B = C.balanceBreakdown(st, a, M.todayISO()); const ids = B ? (b === 'now' ? B.ids : B.pendIds)[c] || [] : [];
+    return { title: { rec: 'Receitas', deb: 'Despesas', cardPay: 'Pagamentos de fatura', trfIn: 'Transferências recebidas', trfOut: 'Transferências enviadas', adj: 'Rendimento registrado' }[c], sub: `${(accById(a) || {}).name || ''} · ${b === 'now' ? 'já no saldo' : 'até o fim do mês'}`, list: ids.map(byId).filter(Boolean), months: true }; }
+  if (k === 'pend') { const today = M.todayISO(), in30 = C.mAdd(today.slice(0, 7), 1) + today.slice(7);
+    return { title: a === 'in' ? 'A receber' : 'A pagar', sub: 'Atrasados e próximos 30 dias' + (a === 'out' ? ' (faturas de cartão ficam na lista da Agenda)' : ''), list: C.pendings(st, in30).filter(p => p.kind === 'tx' && p.dir === a).map(p => p.tx), asc: true }; }
+  if (k === 'ids') { const D = DRILL[a] || { title: 'Lançamentos', ids: [] }; return { title: D.title, sub: D.sub, list: D.ids.map(byId).filter(Boolean), months: true }; }
+  return { title: 'Lançamentos', list: [] };
+}
+function drillSheet(spec) {
+  if (spec.startsWith('pn|')) return sumsSheet(spec);
+  const D = drillData(spec), list = D.list.slice().sort((x, y) => (D.asc ? 1 : -1) * (x.date.localeCompare(y.date) || 0));
+  const mOf = t => t.type === 'cred' ? C.txComp(S(), t) : C.mOf(t.date);
+  const multi = D.months || new Set(list.map(mOf)).size > 1;
+  const tot = C.r2(list.reduce((x, t) => x + Math.abs(t.amount), 0));
+  let body = '';
+  if (!list.length) body = '<p class="empty">Nenhum lançamento.</p>';
+  else if (multi) {
+    const by = new Map(); list.forEach(t => { const m = mOf(t); if (!by.has(m)) by.set(m, []); by.get(m).push(t); });
+    body = [...by].map(([m, l]) => `<div class="day dhead"><span>${C.monthLabel(m)}</span><span class="num">${C.brl(l.reduce((x, t) => x + Math.abs(t.amount), 0))}</span></div><ul class="list">${l.map(t => txRow(t, true)).join('')}</ul>`).join('');
+  } else body = `<ul class="list">${list.map(t => txRow(t, true)).join('')}</ul>`;
+  openSheet(`<h2>${esc(D.title || '')}</h2>${D.sub ? `<p class="hint">${esc(D.sub)}</p>` : ''}
+    <div class="dsum"><span><b class="num">${C.brl(tot)}</b><small>${list.length} lançamento${list.length === 1 ? '' : 's'}</small></span>${D.lanc ? '<button class="btn small" id="dr-lanc">Abrir nos Lançamentos</button>' : ''}</div>
+    <div id="dr-list">${body}</div>`, panel => {
+    panel.onclick = e => {
+      if (e.target.id === 'dr-lanc') { closeSheet(); ui.month = D.lanc.month; ui.f = { ...F0(), ...D.lanc.f }; ui.tab = 'lanc'; ui.q = ''; ui.sub = null; render(); return window.scrollTo(0, 0); }
+      const li = e.target.closest('[data-tx]'); if (li) { const t = S().tx.find(x => x.id === li.dataset.tx); if (!t) return; txSheet(t); ui.reopen = spec; }
+    };
+  });
+}
+/* somas por grupo num período (motor do antigo Painel, js/panel.js): tocar num grupo ou num mês abre os lançamentos */
+function sumsSheet(spec) {
+  const [, set, per, group, title] = spec.split('|'), o = { ...PN.defaults(), set, per, group }, R = PN.build(S(), o);
+  const perL = ((PN.PERIODS.find(x => x[0] === per) || [])[1] || '').toLowerCase(), maxG = Math.max(1, ...R.groups.map(g => Math.abs(g.total))), maxM = Math.max(1, ...R.byMonth.map(x => Math.abs(x.total)));
+  let last = -1; R.byMonth.forEach((x, i) => { if (x.total) last = i; }); const mList = per[0] === 'n' ? R.byMonth.slice(0, last + 1) : R.byMonth;
+  const sub = g => g.parcN ? `${g.parcLeft} de ${g.parcN} parcelas no período · até ${shortM(g.lastM)}` : `${g.n} lançamento${g.n === 1 ? '' : 's'}${R.months.length > 1 ? ' · até ' + shortM(g.lastM) : ''}`;
+  openSheet(`<h2>${esc(title || 'Detalhe')}</h2><p class="hint">${esc(perL)}${R.months.length > 1 && R.total ? ` · média de ${C.brl(R.total / R.months.length)} por mês` : ''}</p>
+    <div class="dsum"><span><b class="num">${C.brl(R.total)}</b><small>${R.n} lançamento${R.n === 1 ? '' : 's'}</small></span></div>
+    ${!R.n ? '<p class="empty">Nada neste período.</p>' : `<h3 class="sub">Por ${group === 'who' ? 'pessoa' : 'item'}</h3><ul class="list wrap">${R.groups.map(g => `<li data-dr="${keepIds(g.label, g.ids, (title || '') + ' · ' + perL)}"><span class="sw" style="background:${col(g.color)};margin-top:6px;align-self:flex-start"></span><span class="t"><b>${esc(g.label)}</b><small>${sub(g)}</small><span class="bar"><i style="width:${(Math.abs(g.total) / maxG * 100).toFixed(1)}%;background:${col(g.color)}"></i></span></span><span class="num">${C.brl(g.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul>
+    ${mList.length > 1 ? `<h3 class="sub">Mês a mês</h3>${mList.map(x => `<button class="pnrow" data-dr="${keepIds(title || 'Lançamentos', x.ids, C.monthLabel(x.m))}"><span class="cm"><b>${shortM(x.m)}</b></span><span class="cbar"><i style="width:${(Math.abs(x.total) / maxM * 100).toFixed(1)}%;background:var(--brand)"></i></span><span class="num pv">${C.brl(x.total)}</span></button>`).join('')}` : ''}`}`, () => {});
+}
+document.addEventListener('click', e => {
+  const el = e.target.closest && e.target.closest('[data-dr]'); if (!el || document.body.classList.contains('locked')) return;
+  e.stopPropagation(); e.preventDefault(); drillSheet(el.dataset.dr);
+}, true);
 
 function txSheet(tx, preset) {
   if (tx && tx.folha) return folhaTxSheet(tx);
@@ -1228,16 +1314,15 @@ function pageAgenda() {
   const st = S(), today = M.todayISO(), in30 = C.mAdd(today.slice(0, 7), 1) + today.slice(7);
   const view = ui.agView || 'pend';
   // o seletor e os números da visão ficam no bloco colorido do alto
-  let html = `<div class="hcard"><div class="seg" id="agseg"><button data-v="pend" aria-pressed="${view === 'pend'}">A vencer</button><button data-v="fix" aria-pressed="${view === 'fix'}">Fixas e parcelas</button><button data-v="loans" aria-pressed="${view === 'loans'}">Dívidas e Pix</button><button data-v="pn" aria-pressed="${view === 'pn'}">Painel</button></div>`;
+  let html = `<div class="hcard"><div class="seg" id="agseg"><button data-v="pend" aria-pressed="${view === 'pend'}">A vencer</button><button data-v="fix" aria-pressed="${view === 'fix'}">Fixas e parcelas</button><button data-v="loans" aria-pressed="${view === 'loans'}">Dívidas e Pix</button></div>`;
   if (view === 'fix') { const fx = fixasHTML(st); html += fx.head + '</div>' + fx.body; }
-  else if (view === 'pn') { const pn = painelHTML(st); html += pn.head + '</div>' + pn.body; }
   else if (view === 'pend') {
     const all = C.pendings(st);
     const sum = (l, d) => l.filter(x => x.dir === d).reduce((s, x) => s + x.amount, 0);
     const late = all.filter(x => x.date < today), next = all.filter(x => x.date >= today && x.date <= in30), later = all.filter(x => x.date > in30);
     const nextAll = [...late, ...next];
-    html += `<div class="kpis two"><div class="kpi"><small>A receber (até 30 dias)</small><b class="num pos">${C.brl(sum(nextAll, 'in'))}</b></div>
-      <div class="kpi"><small>A pagar (até 30 dias)</small><b class="num neg">${C.brl(sum(nextAll, 'out'))}</b></div></div></div>`;
+    html += `<div class="kpis two"><div class="kpi tap" data-dr="pend|in" role="button" tabindex="0"><small>A receber (até 30 dias) <span aria-hidden="true">›</span></small><b class="num pos">${C.brl(sum(nextAll, 'in'))}</b></div>
+      <div class="kpi tap" data-dr="pend|out" role="button" tabindex="0"><small>A pagar (até 30 dias) <span aria-hidden="true">›</span></small><b class="num neg">${C.brl(sum(nextAll, 'out'))}</b></div></div></div>`;
     const block = (title, list, cls) => list.length ? `<div class="card ${cls || ''}"><h2>${title} <span class="hint">(${list.length})</span></h2><ul class="list full">${list.slice(0, 60).map(pendRow).join('')}</ul>${list.length > 60 ? `<p class="hint">e mais ${list.length - 60}…</p>` : ''}</div>` : '';
     html += '<div class="cgrid">' + block('Atrasados', late, 'late') + block('Próximos 30 dias', next) + block('Mais adiante', later);
     if (!all.length) html += `<div class="card empty">Nada pendente.<br>Receitas e despesas marcadas como pendentes, parcelas de dívidas e faturas em aberto aparecem aqui.</div>`;
@@ -1261,12 +1346,8 @@ function pageAgenda() {
       <div class="cols">${group('in', 'Me devem (a receber)')}${group('out', 'Eu devo (a pagar)')}</div>${peopleHTML(st)}`;
   }
   $('#page').innerHTML = html;
-  $('#page').onchange = e => { const k = e.target.dataset && e.target.dataset.pn; if (!k) return; ui.pn = { ...(ui.pn || PN.defaults()), [k]: e.target.value, preset: '' }; pageAgenda(); };
   $('#page').onclick = async e => {
     const v = e.target.closest('#agseg [data-v]'); if (v) { ui.agView = v.dataset.v; return pageAgenda(); }
-    const pp = e.target.closest('[data-pnp]'); if (pp) { const P = PN.PRESETS.find(x => x.k === pp.dataset.pnp); ui.pn = { ...PN.defaults(), preset: P.k, set: P.set, per: P.per, group: P.group }; return pageAgenda(); }
-    const pm = e.target.closest('[data-pnm]'); if (pm) { const o = ui.pn || PN.defaults(); // abre os lançamentos daquele mês com o mesmo recorte
-      ui.month = pm.dataset.pnm; ui.f = { ...F0(), kind: { parc: 'parc', card: 'cred', fix: 'fix', debt: 'debt', out: 'desp', in: 'rec' }[o.set] || 'all', acc: o.acc, who: o.who, cat: o.cat }; ui.tab = 'lanc'; ui.q = ''; render(); return window.scrollTo(0, 0); }
     const ok = e.target.closest('[data-ok]'); if (ok) return confirmPending(ok.dataset.ok);
     const px = e.target.closest('[data-pix]'); if (px) { const t = S().tx.find(x => x.id === px.dataset.pix), who = t && payeeOf(t); return who && pixSheet(who, t.amount, t.id); }
     if (e.target.id === 'fx-new') return txSheet(null, { freq: 'fixa' });
@@ -1286,42 +1367,6 @@ function pageAgenda() {
     const nl = e.target.closest('[data-newloan]'); if (nl) return loanForm(nl.dataset.newloan);
     const lo = e.target.closest('[data-loan]'); if (lo) return loanSheet(lo.dataset.loan);
   };
-}
-
-/* Painel: somas por mês e por grupo, com atalhos para as perguntas mais comuns e filtros livres */
-function painelHTML(st) {
-  const o = ui.pn || (ui.pn = PN.defaults()), R = PN.build(st, o);
-  const setL = (PN.SETS.find(x => x[0] === o.set) || [])[1], perL = (PN.PERIODS.find(x => x[0] === o.per) || [])[1], grpL = (PN.GROUPS.find(x => x[0] === o.group) || [])[1];
-  const sel = (k, list, cur) => `<select data-pn="${k}" aria-label="${k}">${list.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-  const accs = n => st.accounts.filter(a => a.nature === n && (a.active !== false || a.id === o.acc)).map(a => `<option value="${a.id}" ${a.id === o.acc ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
-  const whoOpts = st.accounts.filter(a => a.nature === 'credito').flatMap(a => (a.holders || []).map(h => `<option value="${a.id}|${esc(h.ref)}" ${o.who === a.id + '|' + h.ref ? 'selected' : ''}>${esc(h.name)} · ${esc(a.name)}</option>`)).join('');
-  const cats = kind => st.groups.filter(g => g.kind === kind).map(g => `<optgroup label="${esc(g.name)}"><option value="g:${g.id}" ${o.cat === 'g:' + g.id ? 'selected' : ''}>${esc(g.name)}: tudo</option>${st.items.filter(i => i.groupId === g.id).map(i => `<option value="${i.id}" ${i.id === o.cat ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</optgroup>`).join('');
-  const maxM = Math.max(1, ...R.byMonth.map(x => Math.abs(x.total))), maxG = Math.max(1, ...R.groups.map(g => Math.abs(g.total)));
-  const future = o.per[0] === 'n', many = R.months.length > 1, avg = many ? C.r2(R.total / R.months.length) : 0;
-  const cell = v => v ? C.brl(v).replace(/R\$\s*/, '') : '–';
-  const top = R.groups.slice(0, 40), rest = R.groups.slice(40);
-  // nos períodos à frente, a lista de meses para no último que tem valor (a tabela mostra todos)
-  let lastNz = -1; R.byMonth.forEach((x, i) => { if (x.total) lastNz = i; });
-  const mList = future ? R.byMonth.slice(0, Math.max(lastNz + 1, 1)) : R.byMonth;
-  const head = `<small class="lbl">${esc(setL)} · ${esc(perL.toLowerCase())}</small><span class="big num" id="pn-total">${C.brl(R.total)}</span>
-    <p class="hint">${R.n} lançamento${R.n === 1 ? '' : 's'}${many ? ` · média de ${C.brl(avg)} por mês` : ''}${R.prev && !future ? ` · ${C.brl(R.prev)} ainda previsto ou pendente` : ''}</p>`;
-  const sub = g => o.group === 'desc' && g.parcN ? `${g.parcLeft} de ${g.parcN} parcelas no período · até ${shortM(g.lastM)}` : `${g.n} lançamento${g.n === 1 ? '' : 's'}${many ? ' · até ' + shortM(g.lastM) : ''}`;
-  const body = `<div class="fchips" id="pn-presets">${PN.PRESETS.map(P => `<button class="fchip" data-pnp="${P.k}" aria-pressed="${o.preset === P.k}">${P.label}</button>`).join('')}</div>
-    <details class="card" id="pn-ctl" ${o.preset ? '' : 'open'}><summary>Ajustar: ${esc(setL)} · ${esc(perL.toLowerCase())} · por ${esc(grpL.toLowerCase())}${o.acc || o.who || o.cat ? ' · com filtro' : ''}</summary><div class="grid2"><div><label>O que somar</label>${sel('set', PN.SETS, o.set)}</div><div><label>Período</label>${sel('per', PN.PERIODS, o.per)}</div></div>
-      <div class="grid2"><div><label>Separar por</label>${sel('group', PN.GROUPS, o.group)}</div><div><label>Conta ou cartão</label><select data-pn="acc"><option value="">Todas</option><optgroup label="Contas">${accs('debito')}</optgroup><optgroup label="Cartões">${accs('credito')}</optgroup></select></div></div>
-      <div class="grid2">${whoOpts ? `<div><label>Quem usou o cartão</label><select data-pn="who"><option value="">Qualquer pessoa</option>${whoOpts}</select></div>` : ''}<div><label>Categoria</label><select data-pn="cat"><option value="">Todas</option>${cats(o.set === 'in' ? 'receita' : 'despesa')}</select></div></div></details>
-    ${!R.n ? `<div class="card empty">Nada neste recorte.<br>${o.set === 'card' && o.group === 'who' && !whoOpts ? 'Para ver por pessoa, cadastre quem usa cada cartão em Contas › cartão › Editar cartão.' : 'Mude o período ou os filtros acima.'}</div>` : `
-    <div class="cols">${many ? `<div class="card" id="pn-months"><h2>Mês a mês</h2><p class="hint">Toque num mês para ver os lançamentos.</p>
-      ${mList.map(x => `<button class="pnrow" data-pnm="${x.m}"><span class="cm"><b>${shortM(x.m)}</b></span><span class="cbar"><i style="width:${(Math.abs(x.total) / maxM * 100).toFixed(1)}%;background:var(--brand)"></i></span><span class="num pv ${x.m === R.cur ? 'cur' : ''}">${C.brl(x.total)}</span></button>`).join('')}${mList.length < R.byMonth.length ? `<p class="hint">Nada lançado de ${shortM(R.byMonth[mList.length].m)} em diante.</p>` : ''}</div>` : ''}
-    <div class="card" id="pn-groups"><h2>Por ${esc(grpL.toLowerCase())} <span class="hint">(${R.groups.length})</span></h2>
-      <ul class="list wrap">${top.map(g => `<li style="cursor:default"><span class="sw" style="background:${col(g.color)}"></span><span class="t"><b>${esc(g.label)}</b><small>${sub(g)}</small><span class="bar"><i style="width:${(Math.abs(g.total) / maxG * 100).toFixed(1)}%;background:${col(g.color)}"></i></span></span><span class="num">${C.brl(g.total)}${R.total ? `<small class="pct">${Math.round(g.total / R.total * 100)}%</small>` : ''}</span></li>`).join('')}</ul>
-      ${rest.length ? `<p class="hint">e mais ${rest.length}, somando ${C.brl(rest.reduce((a, g) => a + g.total, 0))}.</p>` : ''}</div></div>
-    ${many && R.groups.length ? `<div class="card scrollx" id="pn-table"><table class="year"><thead><tr><th class="sticky">${esc(grpL)}</th>${R.months.map(m => `<th ${m === R.cur ? 'data-cur' : ''}>${shortM(m)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
-      ${R.groups.slice(0, 25).map(g => `<tr class="g"><td class="sticky" title="${esc(g.label)}">${esc(g.label)}</td>${R.months.map(m => `<td>${cell(g.per[m])}</td>`).join('')}<td><b>${cell(g.total)}</b></td></tr>`).join('')}
-      <tr class="t res"><td class="sticky">Total</td>${R.byMonth.map(x => `<td>${cell(x.total)}</td>`).join('')}<td><b>${cell(R.total)}</b></td></tr></tbody></table></div>
-      <p class="hint">Arraste a tabela para o lado para ver todos os meses.${R.groups.length > 25 ? ' Mostra as 25 maiores linhas; o total considera todas.' : ''}</p>` : ''}`}
-    <p class="hint">Compra no cartão conta no mês da fatura. ${o.set === 'card' ? 'Aqui entram também as compras de quem devolve o dinheiro.' : 'Compras de quem devolve o dinheiro ficam fora, como no Resumo.'}${future ? ' Meses à frente trazem o que já está previsto: parcelas, contas fixas e dívidas.' : ''}</p>`;
-  return { head, body };
 }
 
 function pendRow(p) {
@@ -1645,26 +1690,27 @@ function pageResumo() {
     const x0 = i * gap + gap / 2 - bw - 1, hr = Math.round(x.rec / max * (H - 30)), hd = Math.round(x.desp / max * (H - 30));
     return `<rect x="${x0}" y="${H - 20 - hr}" width="${bw}" height="${hr}" rx="3" class="b-rec"><title>Receitas ${shortM(x.m)}: ${C.brl(x.rec)}</title></rect>
       <rect x="${x0 + bw + 2}" y="${H - 20 - hd}" width="${bw}" height="${hd}" rx="3" class="b-desp"><title>Despesas ${shortM(x.m)}: ${C.brl(x.desp)}</title></rect>
-      <text x="${i * gap + gap / 2}" y="${H - 5}" text-anchor="middle" class="ax ${x.m === m ? 'cur' : ''}">${shortM(x.m)}</text>`;
+      <text x="${i * gap + gap / 2}" y="${H - 5}" text-anchor="middle" class="ax ${x.m === m ? 'cur' : ''}">${shortM(x.m)}</text>
+      <rect x="${i * gap}" y="0" width="${gap}" height="${H}" fill="transparent" class="hit" data-mgo="${x.m}"><title>Ir para ${shortM(x.m)}</title></rect>`;
   }).join('');
   const catHTML = (list, total, kind) => list.length ? list.map(g => `<details class="cat"><summary><span class="sw" style="background:${col(g.color)}"></span><span class="grow">${esc(g.name)}</span><span class="num">${C.brl(g.total)}</span></summary>
       <div class="bar"><i style="width:${Math.max(2, g.total / total * 100).toFixed(1)}%;background:${col(g.color)}"></i></div>
-      <ul class="sublist go">${g.items.map(i => `<li data-fcat="${i.id}" data-fkind="${kind}" role="button" title="Ver estes lançamentos"><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul></details>`).join('')
+      <ul class="sublist go">${g.items.length > 1 ? `<li data-dr="grp|${kind === 'rec' ? 'receita' : 'despesa'}|${m}|${g.id}" role="button" class="all"><span class="grow">Todo o grupo</span><span class="num">${C.brl(g.total)}</span><span class="chev" aria-hidden="true">›</span></li>` : ''}${g.items.map(i => `<li data-dr="cat|${kind === 'rec' ? 'receita' : 'despesa'}|${m}|${i.id}" role="button" title="Ver estes lançamentos"><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul></details>`).join('')
     : '<p class="hint">Nada neste mês.</p>';
   const b = C.budgetMonth(st, m);
-  $('#page').innerHTML = '<div class="hcard">' + seg + monthNav(m) + `<div class="kpis"><div class="kpi tap" data-fk="rec" role="button" tabindex="0" title="Ver as receitas do mês"><small>Receitas <span aria-hidden="true">›</span></small><b class="num pos">${C.brl(sum.rec)}</b></div>
-      <div class="kpi tap" data-fk="desp" role="button" tabindex="0" title="Ver as despesas do mês"><small>Despesas <span aria-hidden="true">›</span></small><b class="num neg">${C.brl(sum.desp)}</b></div>
+  $('#page').innerHTML = '<div class="hcard">' + seg + monthNav(m) + `<div class="kpis"><div class="kpi tap" data-dr="sum|receita|${m}" role="button" tabindex="0" title="Ver as receitas do mês"><small>Receitas <span aria-hidden="true">›</span></small><b class="num pos">${C.brl(sum.rec)}</b></div>
+      <div class="kpi tap" data-dr="sum|despesa|${m}" role="button" tabindex="0" title="Ver as despesas do mês"><small>Despesas <span aria-hidden="true">›</span></small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado do mês</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div></div>
-    ${(() => { const fees = C.r2(st.tx.reduce((x, t) => x + (t.fee && (t.type === 'cred' ? C.txComp(st, t) : C.mOf(t.date)) === m ? t.fee : 0), 0)); return fees ? `<p class="hint" id="rs-fee">Juros e taxas de Pix parcelado ou no crédito neste mês: <b class="num">${C.brl(fees)}</b> (já estão dentro das despesas).</p>` : ''; })()}
+    ${(() => { const fees = C.r2(st.tx.reduce((x, t) => x + (t.fee && (t.type === 'cred' ? C.txComp(st, t) : C.mOf(t.date)) === m ? t.fee : 0), 0)); return fees ? `<p class="hint tapline" id="rs-fee" data-dr="fee|${m}" role="button">Juros e taxas de Pix parcelado ou no crédito neste mês: <b class="num">${C.brl(fees)}</b> (já estão dentro das despesas).</p>` : ''; })()}
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
     <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha.` : ''}</p>
-    ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
-    ${(() => { const mh = PH.monthByHolder(st, m); return mh.length ? `<div class="card"><h2>Por quem usou o cartão</h2><ul class="list calc">${mh.map(o => `<li><span class="grow">${esc(PH.label(o.h))} <small class="hint">${esc(o.card.name)} · ${o.n} compra${o.n > 1 ? 's' : ''}</small>${o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : ''}</span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>${sum.terc ? `<p class="hint">${C.brl(sum.terc)} de quem devolve o dinheiro ficam fora das suas despesas; o reembolso também não conta como receita.</p>` : ''}</div>` : ''; })()}
+    ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv" data-dr="inv|${m}" role="button">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
+    ${(() => { const mh = PH.monthByHolder(st, m); return mh.length ? `<div class="card" id="rs-who"><div class="chead"><h2>Por quem usou o cartão</h2><button class="link" data-dr="pn|card|p6|who|Quem usou o cartão">Últimos 6 meses</button></div><ul class="list calc go">${mh.map(o => `<li data-dr="who|${m}|${o.card.id}|${esc(o.h.ref)}" role="button"><span class="grow">${esc(PH.label(o.h))} <small class="hint">${esc(o.card.name)} · ${o.n} compra${o.n > 1 ? 's' : ''}</small>${o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : ''}</span><span class="num">${C.brl(o.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul>${sum.terc ? `<p class="hint">${C.brl(sum.terc)} de quem devolve o dinheiro ficam fora das suas despesas; o reembolso também não conta como receita.</p>` : ''}</div>` : ''; })()}
     <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1, 'desp')}</div>
-    <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
+    <div><div class="card"><h2>Últimos 6 meses <span class="hint">(toque num mês)</span></h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
       <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
     <div class="card"><h2>Receitas</h2>${catHTML(recs, sum.rec || 1, 'rec')}</div>
-    ${(() => { const bp = C.byPay(st, m); return bp.length ? `<div class="card" id="rs-pay"><h2>Despesas por forma de pagamento</h2><ul class="sublist go" style="padding-left:0">${bp.map(o => `<li ${['folha', 'cartao', 'outros'].includes(o.k) ? 'style="cursor:default"' : `data-fpm="${o.k}" role="button"`}><span class="grow">${o.label} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span>${['folha', 'cartao', 'outros'].includes(o.k) ? '' : '<span class="chev" aria-hidden="true">›</span>'}</li>`).join('')}</ul></div>` : ''; })()}</div></div>`;
+    ${(() => { const bp = C.byPay(st, m); return bp.length ? `<div class="card" id="rs-pay"><h2>Despesas por forma de pagamento</h2><ul class="sublist go" style="padding-left:0">${bp.map(o => `<li data-dr="pay|${m}|${o.k}" role="button"><span class="grow">${o.label} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul></div>` : ''; })()}</div></div>`;
   bindResumo(pageResumo);
 }
 
@@ -1683,11 +1729,17 @@ function pageFuturo(seg) {
     ${subs ? `<button class="banner" id="fu-subs"><span class="grow"><b>${subs} compra${subs > 1 ? 's' : ''} no cartão parece${subs > 1 ? 'm' : ''} assinatura</b><small>Confirme para entrarem na conta dos próximos meses</small></span><span aria-hidden="true">›</span></button>` : ''}
     <div class="cols"><div class="card"><h2>Mês a mês</h2><p class="legend wrapl">${K.map(([, l, c]) => `<span><span class="sw" style="background:${c}"></span> ${l}</span>`).join('')}</p>
       ${rows.map((r, i) => `<details class="cmp" ${i === 1 ? 'open' : ''}><summary><span class="cm"><b>${shortM(r.m)}</b>${r.ends.length ? `<small>${r.ends.length} termina${r.ends.length > 1 ? 'm' : ''}</small>` : ''}</span>${bar(r)}<span class="num cp ${r.pct != null && r.pct > 100 ? 'neg' : ''}">${r.pct == null ? '—' : r.pct + '%'}</span></summary>
-        <ul class="sublist calc"><li><span class="grow">Renda prevista</span><span class="num pos">${C.brl(r.renda)}</span></li>
-          ${K.map(([k, l, c]) => r.parts[k] ? `<li><span class="grow"><span class="sw" style="background:${c}"></span> ${l}</span><span class="num">−${C.brl(r.parts[k])}</span></li>` : '').join('')}
+        <ul class="sublist calc go"><li data-dr="fut|${r.m}|renda" role="button"><span class="grow">Renda prevista</span><span class="num pos">${C.brl(r.renda)}</span><span class="chev" aria-hidden="true">›</span></li>
+          ${K.map(([k, l, c]) => r.parts[k] ? `<li data-dr="fut|${r.m}|${k}" role="button"><span class="grow"><span class="sw" style="background:${c}"></span> ${l}</span><span class="num">−${C.brl(r.parts[k])}</span><span class="chev" aria-hidden="true">›</span></li>` : '').join('')}
           <li class="tot"><span class="grow">${r.sobra < 0 ? 'Falta' : 'Sobra'}</span><span class="num ${r.sobra < 0 ? 'neg' : ''}">${C.brl(Math.abs(r.sobra))}</span></li></ul>
         ${r.ends.length ? `<p class="hint">Termina neste mês: ${r.ends.map(e => `${esc(e.desc)} (${C.brl(e.amount)})`).join('; ')}.</p>` : ''}</details>`).join('')}</div>
-    <div><div class="card"><h2>O que termina</h2>${ends.length ? `<p class="hint">A partir do mês seguinte, o valor deixa de pesar.</p><ul class="list wrap">${ends.map(e => `<li style="cursor:default"><span class="t"><b>${esc(e.desc)}</b><small>${shortM(e.m)} · ${e.what}</small></span><span class="num pos">+${C.brl(e.amount)}/mês</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma parcela ou dívida termina nos próximos 12 meses.</p>'}</div>
+    <div>${(() => { // os próximos 12 meses por tipo de compromisso: cada um abre as somas por item (compra, conta, dívida)
+      const SET = { folha: 'folha', fixas: 'fix', variaveis: 'fix', parcelas: 'parc', dividas: 'debt' }, LAB = { fix: 'Fixas e de valor variável' };
+      const tots = {}; rows.slice(0, 12).forEach(r => Object.entries(r.parts).forEach(([k, v]) => { const s = SET[k]; if (s && v) tots[s] = (tots[s] || 0) + v; }));
+      const list = Object.entries(tots).sort((x, y) => y[1] - x[1]); if (!list.length) return '';
+      return `<div class="card" id="fu-kinds"><h2>Próximos 12 meses, por tipo</h2><p class="hint">Toque para ver cada compra, conta ou dívida e quanto falta.</p><ul class="list wrap">${list.map(([s, v]) => { const kk = Object.keys(SET).find(x => SET[x] === s), lab = LAB[s] || (C.COMMIT_KINDS.find(x => x[0] === kk) || [])[1]; const cc = (C.COMMIT_KINDS.find(x => x[0] === kk) || [])[2];
+        return `<li data-dr="pn|${s}|n12|desc|${esc(lab)}" role="button"><span class="sw" style="background:${cc}"></span><span class="t"><b>${esc(lab)}</b><small>média de ${C.brl(v / 12)} por mês</small></span><span class="num">${C.brl(v)}</span><span class="chev" aria-hidden="true">›</span></li>`; }).join('')}</ul></div>`; })()}
+    <div class="card"><h2>O que termina</h2>${ends.length ? `<p class="hint">A partir do mês seguinte, o valor deixa de pesar.</p><ul class="list wrap">${ends.map(e => `<li ${e.plan ? `data-dr="plan|${e.plan}"` : e.loan ? `data-dr="loan|${e.loan}"` : 'style="cursor:default"'}><span class="t"><b>${esc(e.desc)}</b><small>${shortM(e.m)} · ${e.what}</small></span><span class="num pos">+${C.brl(e.amount)}/mês</span></li>`).join('')}</ul>` : '<p class="hint">Nenhuma parcela ou dívida termina nos próximos 12 meses.</p>'}</div>
     <div class="card flat"><h2>Como ler</h2><p class="hint">Conta o que já está no app para cada mês: descontos em folha, contas fixas e assinaturas, contas de valor variável (pela média), parcelas no cartão e na conta, e parcelas de dívidas. Gastos do dia a dia que ainda não aconteceram não entram, então a sobra é o que resta para eles. A renda e as contas fixas são previstas até ${shortM(C.mAdd(cur, M.REC_AHEAD))}.</p></div></div></div>`;
   bindResumo(() => pageFuturo(seg));
   const sb = $('#fu-subs'); if (sb) sb.onclick = e => { e.stopPropagation(); ui.tab = 'agenda'; ui.agView = 'fix'; render(); const c = $('#subs-card'); if (c) c.scrollIntoView({ block: 'center' }); };
@@ -1698,9 +1750,6 @@ function bindResumo(redraw) {
     const v = e.target.closest('[data-rv]'); if (v) { ui.rsView = v.dataset.rv; return pageResumo(); }
     if (monthNavClick(e, redraw)) return;
     // receitas, despesas e cada categoria abrem os Lançamentos do mês já filtrados
-    const fpy = e.target.closest('[data-fpm]'); if (fpy) { ui.f = { ...F0(), kind: 'desp', pay: fpy.dataset.fpm }; ui.tab = 'lanc'; ui.q = ''; render(); return window.scrollTo(0, 0); }
-    const fk = e.target.closest('[data-fk]'), fc = e.target.closest('[data-fcat]');
-    if (fk || fc) { ui.f = fk ? { ...F0(), kind: fk.dataset.fk } : { ...F0(), kind: fc.dataset.fkind, cat: fc.dataset.fcat }; ui.tab = 'lanc'; ui.q = ''; render(); return window.scrollTo(0, 0); }
     const y = e.target.closest('[data-y]'); if (y) { ui.year = (ui.year || +M.todayISO().slice(0, 4)) + +y.dataset.y; return redraw(); }
     const bi = e.target.closest('[data-bi]'); if (bi) return budgetSheet(bi.dataset.bi);
     if (e.target.id === 'b-add') return budgetSheet(null);
@@ -1738,6 +1787,7 @@ function budgetSheet(itemId) {
         <label for="o-item">Categoria</label><select id="o-item"><option value="">Escolha…</option>${optItems('despesa', itemId)}</select>
         ${it ? `<label for="o-val">Valor por mês (R$)</label><input id="o-val" inputmode="decimal" value="${moneyText(C.budgetOf(S(), itemId, m))}" placeholder="0,00">
           <p class="hint">Média dos 3 meses anteriores: <button class="link" id="o-avg">${C.brl(avg)}</button></p>
+          <button type="button" class="link" data-dr="cat|despesa|${m}|${itemId}">Ver os gastos de ${C.monthLabel(m).toLowerCase()} ›</button>
           <label class="check"><input type="checkbox" id="o-only" ${hasMonth ? 'checked' : ''}> Valer só para ${C.monthLabel(m).toLowerCase()} (os outros meses continuam com o valor padrão${o && o.def ? ' de ' + C.brl(o.def) : ''})</label>` : ''}
         <div class="actions">${o && (o.def || hasMonth) ? '<button class="btn danger" id="o-del">Remover</button>' : ''}<button class="btn" id="o-cancel">Cancelar</button><button class="btn primary" id="o-save" ${it ? '' : 'disabled'}>Salvar</button></div>`;
       panel.querySelector('#o-item').onchange = e => { itemId = e.target.value; draw(); };
@@ -1769,19 +1819,20 @@ function pageAno(seg) {
   const st = S(), y = ui.year || +M.todayISO().slice(0, 4), Y = C.yearTable(st, y);
   const cell = v => v ? C.brl(v).replace('R$ ', '') : '–';
   const head = `<tr><th class="sticky">${y}</th>${Y.months.map(m => `<th ${m === M.todayISO().slice(0, 7) ? 'data-cur' : ''}>${shortM(m).slice(0, 3)}</th>`).join('')}<th>Total</th></tr>`;
-  const groupRows = (list, cls) => list.map(g => `<tr class="g ${cls}"><td class="sticky"><span class="sw" style="background:${col(g.color)}"></span> ${esc(g.name)}</td>${g.months.map(v => `<td>${cell(v)}</td>`).join('')}<td><b>${cell(g.total)}</b></td></tr>
-    ${g.items.map(i => `<tr class="i"><td class="sticky">${esc(i.name)}</td>${i.months.map(v => `<td>${cell(v)}</td>`).join('')}<td>${cell(i.total)}</td></tr>`).join('')}`).join('');
-  const tot = (label, arr, total, cls) => `<tr class="t ${cls}"><td class="sticky">${label}</td>${arr.map(v => `<td class="${v < 0 ? 'neg' : ''}">${cell(v)}</td>`).join('')}<td class="${total < 0 ? 'neg' : ''}"><b>${cell(total)}</b></td></tr>`;
+  const kindOf = cls => cls === 'rec' ? 'receita' : 'despesa', dcell = (v, spec) => v ? `<td data-dr="${spec}" class="dc">${cell(v)}</td>` : `<td>${cell(v)}</td>`;
+  const groupRows = (list, cls) => list.map(g => `<tr class="g ${cls}"><td class="sticky"><span class="sw" style="background:${col(g.color)}"></span> ${esc(g.name)}</td>${g.months.map((v, i) => dcell(v, `grp|${kindOf(cls)}|${Y.months[i]}|${g.id}`)).join('')}${dcell(g.total, `grp|${kindOf(cls)}|${y}|${g.id}`).replace('<td', '<td style="font-weight:700"')}</tr>
+    ${g.items.map(i => `<tr class="i"><td class="sticky">${esc(i.name)}</td>${i.months.map((v, k) => dcell(v, `cat|${kindOf(cls)}|${Y.months[k]}|${i.id}`)).join('')}${dcell(i.total, `cat|${kindOf(cls)}|${y}|${i.id}`)}</tr>`).join('')}`).join('');
+  const tot = (label, arr, total, cls, kind) => `<tr class="t ${cls}"><td class="sticky">${label}</td>${arr.map((v, i) => kind && v ? `<td data-dr="sum|${kind}|${Y.months[i]}" class="dc">${cell(v)}</td>` : `<td class="${v < 0 ? 'neg' : ''}">${cell(v)}</td>`).join('')}<td class="${total < 0 ? 'neg' : ''} ${kind && total ? 'dc' : ''}" ${kind && total ? `data-dr="sum|${kind}|${y}"` : ''}><b>${cell(total)}</b></td></tr>`;
   const res = C.r2(Y.recT - Y.despT);
   $('#page').innerHTML = '<div class="hcard">' + seg + `<div class="month"><button data-y="-1" aria-label="Ano anterior">‹</button><b>${y}</b><button data-y="1" aria-label="Próximo ano">›</button></div>
     <div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(Y.recT)}</b></div><div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(Y.despT)}</b></div>
     <div class="kpi"><small>Resultado do ano</small><b class="num ${res < 0 ? 'neg' : ''}">${C.brl(res)}</b></div></div></div>
     <div class="row" style="justify-content:flex-end"><button class="btn small" id="y-csv">Baixar planilha do ano (CSV)</button></div>
     <div class="card scrollx"><table class="year"><thead>${head}</thead><tbody>
-      ${tot('Receitas', Y.recM, Y.recT, 'pos')}${groupRows(Y.rec, 'rec')}
-      ${tot('Despesas', Y.despM, Y.despT, '')}${groupRows(Y.desp, 'desp')}
+      ${tot('Receitas', Y.recM, Y.recT, 'pos', 'receita')}${groupRows(Y.rec, 'rec')}
+      ${tot('Despesas', Y.despM, Y.despT, '', 'despesa')}${groupRows(Y.desp, 'desp')}
       ${tot('Resultado', Y.resM, res, 'res')}</tbody></table></div>
-    <p class="hint">Arraste a tabela para o lado para ver todos os meses. Cartão entra pelo mês da fatura.</p>`;
+    <p class="hint">Arraste a tabela para o lado para ver todos os meses. Toque num valor para ver os lançamentos. Cartão entra pelo mês da fatura.</p>`;
   const sx = $('#page .scrollx'), cur = sx && sx.querySelector('th[data-cur]');
   if (cur) sx.scrollLeft = Math.max(0, cur.offsetLeft - sx.clientWidth + cur.offsetWidth * 3);
   bindResumo(() => pageAno(seg));
@@ -1825,14 +1876,14 @@ function pageContas() {
 /* de onde vem o saldo de uma conta, linha a linha */
 function saldoHTML(acc) {
   const today = M.todayISO(), b = C.balanceBreakdown(S(), acc.id, today); if (!b) return '';
-  const line = (label, v, sign) => v ? `<li><span class="grow">${label}</span><span class="num">${sign}${C.brl(Math.abs(v))}</span></li>` : '';
+  const line = (label, v, sign, dr) => v ? `<li ${dr ? `data-dr="bal|${acc.id}|${dr}" role="button"` : ''}><span class="grow">${label}</span><span class="num">${sign}${C.brl(Math.abs(v))}</span>${dr ? '<span class="chev" aria-hidden="true">›</span>' : ''}</li>` : '';
   const n = b.now, p = b.pend, fat = p.fat + p.cardPay;
-  const pend = line('A receber até o fim do mês', p.rec, '+') + line('A pagar até o fim do mês', p.deb, '−') + line('Faturas de cartão a pagar', fat, '−') + line('Transferências previstas (entrada)', p.trfIn, '+') + line('Transferências previstas (saída)', p.trfOut, '−');
+  const pend = line('A receber até o fim do mês', p.rec, '+', 'pend|rec') + line('A pagar até o fim do mês', p.deb, '−', 'pend|deb') + line('Faturas de cartão a pagar', fat, '−') + line('Transferências previstas (entrada)', p.trfIn, '+', 'pend|trfIn') + line('Transferências previstas (saída)', p.trfOut, '−', 'pend|trfOut');
   return `<details class="rgroup" id="a-calc" open><summary>Como chegamos neste valor</summary>
-    <ul class="sublist calc"><li><span class="grow">Saldo inicial${b.initialDate ? ' (fim do dia ' + C.fmtD(b.initialDate) + '/' + b.initialDate.slice(2, 4) + ')' : ''}</span><span class="num">${C.brl(b.initial)}</span></li>
-      ${line(acc.inv ? 'Entradas' : 'Receitas já recebidas', n.rec, '+')}${line(acc.inv ? 'Saídas' : 'Despesas já pagas', n.deb, '−')}${line('Pagamentos de fatura de cartão', n.cardPay, '−')}
-      ${line(acc.inv ? 'Aportes (transferências recebidas)' : 'Transferências recebidas', n.trfIn, '+')}${line(acc.inv ? 'Resgates (transferências enviadas)' : 'Transferências enviadas', n.trfOut, '−')}
-      ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+')}
+    <ul class="sublist calc go"><li><span class="grow">Saldo inicial${b.initialDate ? ' (fim do dia ' + C.fmtD(b.initialDate) + '/' + b.initialDate.slice(2, 4) + ')' : ''}</span><span class="num">${C.brl(b.initial)}</span></li>
+      ${line(acc.inv ? 'Entradas' : 'Receitas já recebidas', n.rec, '+', 'now|rec')}${line(acc.inv ? 'Saídas' : 'Despesas já pagas', n.deb, '−', 'now|deb')}${line('Pagamentos de fatura de cartão', n.cardPay, '−', 'now|cardPay')}
+      ${line(acc.inv ? 'Aportes (transferências recebidas)' : 'Transferências recebidas', n.trfIn, '+', 'now|trfIn')}${line(acc.inv ? 'Resgates (transferências enviadas)' : 'Transferências enviadas', n.trfOut, '−', 'now|trfOut')}
+      ${line('Rendimento registrado', n.adj, n.adj < 0 ? '−' : '+', 'now|adj')}
       <li class="tot"><span class="grow">= Saldo hoje</span><span class="num">${C.brl(n.total)}</span></li>
       ${acc.inv ? '' : pend + `<li class="tot"><span class="grow">= No fim do mês, com pendentes</span><span class="num">${C.brl(b.end.total)}</span></li>`}</ul>
     <p class="hint">${b.initialDate ? `Lançamentos até ${C.fmtD(b.initialDate)}/${b.initialDate.slice(2, 4)} já estão dentro do saldo inicial e não contam de novo. ` : ''}${acc.inv ? '' : 'Compra no cartão só sai da conta quando a fatura é paga; o que é pago pela folha não passa pela conta. Se o valor não bate com o banco, confira o saldo inicial e a data dele, e veja se há lançamento pendente que já foi pago ou movimento que falta importar.'}</p></details>`;
@@ -2097,7 +2148,7 @@ function fixasHTML(st) {
     <ul class="list wrap">${sug.map((x, i) => `<li><span class="t"><b>${esc(x.desc || (itemById(x.itemId) || {}).name || '')}</b><small>${x.kind === 'fixa' ? 'fixa' : `variável, de ${C.brl(x.min)} a ${C.brl(x.max)}`} · ${x.n} dos últimos 6 meses · dia ~${x.day}${accById(x.accountId) ? ' · ' + esc(accById(x.accountId).name) : ''}</small></span>
       <span class="num">${x.kind === 'var' ? '≈ ' : ''}${C.brl(x.amount)}</span><span class="row"><button class="btn small" data-ign="${i}">Ignorar</button><button class="btn small primary" data-sug="${i}">Cadastrar</button></span></li>`).join('')}</ul></div>`;
   html += `<div class="card"><h2>Parcelados <span class="hint">(${P.length})</span></h2>${P.length ? `<p class="hint">Faltam ${C.brl(P.reduce((s, p) => s + p.rest, 0))} no total. Parcelas "previstas" vêm de faturas importadas e são trocadas pelas reais quando a fatura seguinte chega.</p>
-    <ul class="list wrap">${P.map(p => `<li data-ptx="${p.firstId}"><span class="t"><b>${esc(p.desc)}</b><small>${esc((accById(p.accountId) || {}).name || '')} · faltam ${p.open} de ${p.n} · ${C.brl(p.parcel)} por mês · até ${shortM(p.until)}${p.prev ? ` · ${p.prev} prevista(s)` : ''}</small></span><span class="num">${C.brl(p.rest)}</span></li>`).join('')}</ul>`
+    <ul class="list wrap">${P.map(p => `<li data-dr="plan|${p.key}"><span class="t"><b>${esc(p.desc)}</b><small>${esc((accById(p.accountId) || {}).name || '')} · faltam ${p.open} de ${p.n} · ${C.brl(p.parcel)} por mês · até ${shortM(p.until)}${p.prev ? ` · ${p.prev} prevista(s)` : ''}</small></span><span class="num">${C.brl(p.rest)}</span></li>`).join('')}</ul>`
     : '<p class="hint">Nenhuma compra parcelada em aberto. Ao lançar, escolha "Parcelada" (até 36x, no cartão ou na conta); ao importar uma fatura, as parcelas futuras entram como previstas.</p>'}</div>`;
   ui._sug = allSug;
   return { head, body: html + '</div>' };
@@ -2112,6 +2163,7 @@ function recSheet(id) {
       <p class="hint">${r.kind === 'var' ? (s.n ? `Últimos ${s.n} meses ${paidW}: média dos 3 últimos ${C.brl(s.avg3)}, menor ${C.brl(s.min)}, maior ${C.brl(s.max)}, último ${C.brl(s.last)}.` : `Ainda sem meses ${paidW}: usa a estimativa abaixo.`) + ` Previsto para os próximos meses: <b>${C.brl(est)}</b>.` : `Fixa: ${C.brl(r.amount)} todo mês.`}
         Desde ${shortM(r.start)}${r.end ? `, ${ended ? 'encerrada em' : 'até'} ${shortM(r.end)}` : ', sem data para acabar'}.</p>
       ${(r.keys || []).length ? `<p class="hint">No extrato, é reconhecida por: <b>${r.keys.map(esc).join('</b>, <b>')}</b>. <button type="button" class="link" id="rc-forget">Esquecer</button></p>` : `<p class="hint">Para o app reconhecer sozinho no extrato: ao importar, escolha esta conta na linha do ${r.type === 'rec' ? 'crédito' : 'pagamento'}; ou abra um lançamento já importado e toque em "Vincular a…". O app guarda o nome que o banco usa, mesmo quando o valor muda.</p>`}
+      <button type="button" class="link" data-dr="rec|${r.id}">Ver os lançamentos de todos os meses ›</button>
       <label for="rc-desc">Descrição</label><input id="rc-desc" value="${esc(r.desc)}">
       <p class="hint">Pode dar o nome que quiser: o app continua reconhecendo pelo nome que vem do banco, que fica guardado em cada lançamento.</p>
       <div class="seg small" id="rc-kind"><button type="button" data-k="fixa" aria-pressed="${r.kind === 'fixa'}">Fixa</button><button type="button" data-k="var" aria-pressed="${r.kind === 'var'}">Valor variável</button></div>
@@ -2312,7 +2364,7 @@ function faturaSheet(cardId, comp) {
       ${f.list.length && (f.manual || !paid) ? `<details class="more"><summary>${f.manual ? 'Fatura marcada como paga' : 'Já paguei e não quero registrar'}</summary>
         <p class="hint">"Registrar pagamento" tira o valor da conta (pode ser parcial). "Marcar paga sem registrar" não mexe no saldo: serve para faturas pagas antes de você começar a usar o app. Se o pagamento já está nos lançamentos como despesa (um Pix para o banco do cartão), abra-o e toque em "Vincular a…".</p>
         <button class="btn small" id="fa-pay">${f.manual ? 'Desmarcar paga' : 'Marcar paga sem registrar'}</button></details>` : ''}
-      ${(() => { const bh = PH.byHolder(S(), cardId, comp); return bh.length > 1 || (bh[0] && bh[0].h) ? `<h3 class="sub">Por cartão</h3><ul class="list calc">${bh.map(o => `<li><span class="grow">${o.h ? esc(PH.label(o.h)) + (o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : '') : 'Sem cartão cadastrado'} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>` : ''; })()}
+      ${(() => { const bh = PH.byHolder(S(), cardId, comp); return bh.length > 1 || (bh[0] && bh[0].h) ? `<h3 class="sub">Por cartão</h3><ul class="list calc go">${bh.map(o => `<li data-dr="who|${comp}|${cardId}|${esc(o.ref || '')}" role="button"><span class="grow">${o.h ? esc(PH.label(o.h)) + (o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : '') : 'Sem cartão cadastrado'} <small class="hint">(${o.n})</small></span><span class="num">${C.brl(o.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul>` : ''; })()}
       ${f.payments.length ? `<h3 class="sub">Pagamentos</h3><ul class="list">${f.payments.map(t => txRow(t, true)).join('')}</ul>` : ''}
       ${f.list.length ? `<h3 class="sub">Compras (${f.list.length})</h3><ul class="list">${f.list.map(t => txRow(t, true, true)).join('')}</ul>` : '<p class="empty">Nenhuma compra nesta fatura.<br>Toque em <b>Importar</b> para trazer o PDF ou o CSV da fatura.</p>'}`;
     panel.onclick = async e => {

@@ -616,3 +616,17 @@ a.link{text-decoration:none}
   .top{padding-top:calc(env(safe-area-inset-top) + 6px); padding-bottom:6px}
   .fab{height:46px; bottom:14px}
 }
+
+/* 0.17: detalhe ao tocar */
+.dsum{display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--field); border-radius:var(--r-in); padding:10px 14px; margin:8px 0 4px}
+.dsum b{font-size:20px; display:block} .dsum small{color:var(--muted); font-size:13px}
+.day.dhead{display:flex; justify-content:space-between; text-transform:none; letter-spacing:0; font-size:14px; color:var(--ink); border-bottom:1px solid var(--line); padding-bottom:6px}
+.list.calc.go li, .sublist.calc.go li[data-dr]{cursor:pointer}
+.sublist li.all .grow{font-weight:700}
+.tapline{cursor:pointer; text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:3px}
+table.year td.dc{cursor:pointer}
+table.year td.dc:hover{background:var(--brand-soft)}
+.chart .hit{cursor:pointer}
+[data-dr] .chev, .sublist.go .chev{color:var(--muted); margin-left:4px; flex:none}
+.list li[data-dr]{cursor:pointer}
+#okbox-inv, .okbox[data-dr]{cursor:pointer}

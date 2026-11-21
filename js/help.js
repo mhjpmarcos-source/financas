@@ -38,7 +38,8 @@ export const GUIDE = [
     ['Resultado é o mesmo que saldo?', 'Não. <b>Resultado</b> é receitas menos despesas do mês, incluindo o que ainda está previsto. <b>Saldo</b> é o dinheiro na conta e fica em Contas.'],
     ['Como defino um orçamento?', 'Resumo › Orçamento: toque numa categoria e diga quanto pretende gastar por mês, ou peça a sugestão pela média dos últimos 3 meses.'],
     ['O que a tela "Futuro" mostra?', 'Para cada um dos próximos 12 meses, a renda prevista e quanto dela já tem destino: descontos em folha, contas fixas e assinaturas, parcelas e dívidas. Mostra também o que termina em cada mês.'],
-    ['Onde vejo quanto tenho de parcelas, ou quanto cada pessoa gastou?', 'Em <b>Agenda › Painel</b>. Os atalhos do alto respondem às perguntas mais comuns (parcelas a pagar, quem usou o cartão, faturas por cartão, fixas e assinaturas, dívidas); em "Ajustar" você escolhe o que somar, o período, como separar e os filtros. Tocar num mês abre os lançamentos daquele recorte.'],
+    ['Como vejo o que forma um valor?', 'Toque nele. No Resumo, receitas, despesas, cada categoria, cada pessoa que usou o cartão, cada forma de pagamento, cada célula da tabela do ano e cada linha do Futuro abrem a lista dos lançamentos; tocar num lançamento abre o detalhe e, ao fechar, você volta à lista. O mesmo vale para as linhas do saldo da conta, para "Por cartão" na fatura e para os parcelados da Agenda.'],
+    ['Onde vejo quanto tenho de parcelas, ou quanto cada pessoa gastou?', 'Parcelas: <b>Resumo › Futuro › Próximos 12 meses, por tipo › Parcelas</b> mostra cada compra, quantas parcelas faltam e até quando. Pessoas: <b>Resumo › Mês › Por quem usou o cartão</b> (toque na pessoa para ver cada compra, ou em "Últimos 6 meses").'],
     ['Como filtro os lançamentos?', 'Em Lançamentos, use a fila Tudo · Receitas · Despesas… e "Conta, categoria…". Tocar em Receitas ou Despesas no alto também filtra.']
   ]],
   ['Segurança e cópias', [

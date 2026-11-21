@@ -39,7 +39,7 @@ await p.click('[data-tab=lanc]'); if (await p.locator('[data-mgo]').count()) awa
 assert.match(await p.locator('li[data-tx]', { hasText: 'Presente Exemplo' }).textContent(), /Pix agendado/);
 await p.click('[data-fmore]'); await p.selectOption('#fl-pay', 'pix*'); await p.click('#fl-ok');
 const names = await p.$$eval('#lbody li[data-tx] .t b', l => l.map(x => x.textContent)); assert(names.includes('Presente Exemplo') && names.includes('Academia Exemplo') && names.every(n => /Exemplo/.test(n)));
-await p.click('[data-tab=resumo]'); assert.match(await p.textContent('#rs-pay'), /Pix Automático/); await p.click('#rs-pay [data-fpm=pixauto]');
+await p.click('[data-tab=resumo]'); assert.match(await p.textContent('#rs-pay'), /Pix Automático/); await p.click('#rs-pay [data-dr$="|pixauto"]'); await p.click('#dr-lanc');
 assert.deepEqual(await p.$$eval('#lbody li[data-tx] .t b', l => l.map(x => x.textContent)), ['Academia Exemplo']);
 
 // segundo aparelho: entra direto nos dados, sem a configuração inicial e sem o tutorial

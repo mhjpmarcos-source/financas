@@ -160,27 +160,29 @@ export function balanceBreakdown(S, accId, today) {
   const a = S.accounts.find(x => x.id === accId); if (!a) return null;
   const start = a.initialDate || '', eom = today.slice(0, 7) + '-31';
   const parts = (limit, lq) => {
-    const p = { rec: 0, deb: 0, cardPay: 0, trfIn: 0, trfOut: 0, adj: 0, fat: 0, n: 0 };
+    const p = { rec: 0, deb: 0, cardPay: 0, trfIn: 0, trfOut: 0, adj: 0, fat: 0, n: 0 }, ids = { rec: [], deb: [], cardPay: [], trfIn: [], trfOut: [], adj: [] };
     const ok = (d, t) => d <= limit && d > start && !(lq && t && t.status !== 'liq');
     S.tx.forEach(t => {
       if (t.folha || !ok(t.date, t)) return;
-      if (t.type === 'trf') { if (t.accountId === accId) { p.trfOut += t.amount; p.n++; } if (t.toAccountId === accId) { p.trfIn += t.amount; p.n++; } return; }
+      if (t.type === 'trf') { if (t.accountId === accId) { p.trfOut += t.amount; p.n++; ids.trfOut.push(t.id); } if (t.toAccountId === accId) { p.trfIn += t.amount; p.n++; ids.trfIn.push(t.id); } return; }
       if (t.accountId !== accId) return;
-      if (t.adj) p.adj += t.type === 'rec' ? t.amount : -t.amount;
-      else if (t.type === 'rec') p.rec += t.amount;
-      else if (t.type === 'deb') { if (t.cardPay) p.cardPay += t.amount; else p.deb += t.amount; }
+      let k;
+      if (t.adj) { p.adj += t.type === 'rec' ? t.amount : -t.amount; k = 'adj'; }
+      else if (t.type === 'rec') { p.rec += t.amount; k = 'rec'; }
+      else if (t.type === 'deb') { k = t.cardPay ? 'cardPay' : 'deb'; p[k] += t.amount; }
       else return;
-      p.n++;
+      p.n++; ids[k].push(t.id);
     });
     if (!lq) faturas(S).forEach(f => { if (f.total <= 0 || f.accountId !== accId || f.rest <= 0 || f.status === 'liq') return; if (f.date <= limit && f.date > start) p.fat += f.rest; });
     Object.keys(p).forEach(k => { p[k] = r2(p[k]); });
     p.total = r2((+a.initial || 0) + p.rec - p.deb - p.cardPay + p.trfIn - p.trfOut + p.adj - p.fat);
-    return p;
+    return { p, ids };
   };
-  const now = parts(today, true), end = parts(eom, false);
-  const d = k => r2(end[k] - now[k]);
-  return { initial: r2(+a.initial || 0), initialDate: start, now, end,
-    pend: { rec: d('rec'), deb: d('deb'), cardPay: d('cardPay'), trfIn: d('trfIn'), trfOut: d('trfOut'), fat: d('fat') } };
+  const N = parts(today, true), E = parts(eom, false), now = N.p, end = E.p;
+  const d = k => r2(end[k] - now[k]), dIds = k => E.ids[k].filter(id => !N.ids[k].includes(id));
+  return { initial: r2(+a.initial || 0), initialDate: start, now, end, ids: N.ids,
+    pend: { rec: d('rec'), deb: d('deb'), cardPay: d('cardPay'), trfIn: d('trfIn'), trfOut: d('trfOut'), fat: d('fat') },
+    pendIds: { rec: dIds('rec'), deb: dIds('deb'), cardPay: dIds('cardPay'), trfIn: dIds('trfIn'), trfOut: dIds('trfOut') } };
 }
 
 /* compras de uma fatura (cartão + competência) */
@@ -315,7 +317,7 @@ export function parcelSummary(S, today = M.todayISO()) {
     const open = list.filter(t => isCard ? txComp(S, t) >= curComp : t.status === 'pend');
     const lastT = list[list.length - 1];
     return { desc: first.desc.replace(/\s*\(\d+\/\d+\)\s*$/, ''), accountId: first.accountId, isCard, n, have: list.length, open: open.length, rest: r2(open.reduce((s, t) => s + t.amount, 0)),
-      parcel: open[0] ? open[0].amount : lastT.amount, until: isCard ? txComp(S, lastT) : lastT.date.slice(0, 7), prev: list.filter(t => t.prev).length, firstId: first.id };
+      parcel: open[0] ? open[0].amount : lastT.amount, until: isCard ? txComp(S, lastT) : lastT.date.slice(0, 7), prev: list.filter(t => t.prev).length, firstId: first.id, key: first.parcKey || first.seriesId };
   }).filter(p => p.open > 0).sort((a, b) => a.until < b.until ? -1 : 1);
 }
 
@@ -455,6 +457,17 @@ export function detectSubs(S, today = M.todayISO()) {
    Para cada um dos n meses a partir de `from`: a renda prevista e quanto dela já tem destino, por tipo de compromisso.
    Usa a mesma regra do resumo do mês (cartão pela fatura; pagamento de fatura e transferência fora; o que a folha paga entra
    na renda e na despesa). `ends` lista o que termina naquele mês (última parcela), isto é, quanto fica livre no mês seguinte. */
+const commitKind = (t, recKind) => t.folha ? 'folha' : t.loanId ? 'dividas' : (t.parcKey || (t.seriesId && t.seriesKind !== 'rep')) ? 'parcelas' : t.recId ? (recKind[t.recId] === 'var' ? 'variaveis' : 'fixas') : 'outros';
+/* os lançamentos de um mês que formam a renda (k = 'renda') ou um tipo de compromisso (folha, fixas…) da tela Futuro */
+export function committedTx(S, m, k) {
+  const recKind = Object.fromEntries((S.rec || []).map(r => [r.id, r.kind]));
+  return S.tx.filter(t => {
+    if (t.adj || t.reimb || t.cardPay || t.type === 'trf' || (t.type === 'cred' && isThird(S, t))) return false;
+    if ((t.type === 'cred' ? txComp(S, t) : mOf(t.date)) !== m) return false;
+    if (k === 'renda') return t.type === 'rec' || !!t.folha;
+    return t.type !== 'rec' && commitKind(t, recKind) === k;
+  });
+}
 export const COMMIT_KINDS = [['folha', 'Descontado na folha', '#7b55c7'], ['fixas', 'Contas fixas e assinaturas', '#1e88e5'], ['variaveis', 'Contas de valor variável', '#00897b'],
   ['parcelas', 'Parcelas', '#e98b3a'], ['dividas', 'Dívidas', '#d9534f'], ['outros', 'Outros lançamentos do mês', '#90a4ae']];
 export function committed(S, from, n = 12) {
@@ -469,14 +482,14 @@ export function committed(S, from, n = 12) {
     const m = t.type === 'cred' ? txComp(S, t) : mOf(t.date), R = rows[idx[m]]; if (!R) return;
     if (t.type === 'rec') { R.renda += t.amount; return; }
     const parc = t.parcKey ? [t.parcI, t.parcN] : t.seriesId && t.seriesKind !== 'rep' ? [t.seriesIdx, t.seriesN] : null;
-    const k = t.folha ? 'folha' : t.loanId ? 'dividas' : parc ? 'parcelas' : t.recId ? (recKind[t.recId] === 'var' ? 'variaveis' : 'fixas') : 'outros';
+    const k = commitKind(t, recKind);
     R.parts[k] += t.amount; if (t.folha) R.renda += t.amount;
     const name = (t.desc || '').replace(/\s*\(\d+\/\d+\)\s*$/, '');
-    if (parc && parc[1] && parc[0] === parc[1]) R.ends.push({ desc: name, amount: t.amount, what: `última parcela (${parc[1]}/${parc[1]})` });
+    if (parc && parc[1] && parc[0] === parc[1]) R.ends.push({ desc: name, amount: t.amount, what: `última parcela (${parc[1]}/${parc[1]})`, plan: t.parcKey || t.seriesId });
     else if (t.loanId && lastOfLoan[t.loanId] === m) {
       const loan = (S.loans || []).find(l => l.id === t.loanId);
       // consignado: a agenda vai só até o horizonte da previsão; a última linha só é o fim de verdade quando cai antes dele
-      if (loan && !(loan.folha && m >= months[n - 1]) && !(loan.folha && m >= mAdd(M.todayISO().slice(0, 7), M.REC_AHEAD))) R.ends.push({ desc: [loan.person, loan.desc].filter(Boolean).join(' · ') || name, amount: t.amount, what: 'última parcela da dívida' });
+      if (loan && !(loan.folha && m >= months[n - 1]) && !(loan.folha && m >= mAdd(M.todayISO().slice(0, 7), M.REC_AHEAD))) R.ends.push({ desc: [loan.person, loan.desc].filter(Boolean).join(' · ') || name, amount: t.amount, what: 'última parcela da dívida', loan: t.loanId });
     }
   });
   return rows.map(R => {
@@ -521,4 +534,19 @@ export function byPay(S, m) {
     tot[k] = tot[k] || { k, total: 0, n: 0 }; tot[k].total += t.amount; tot[k].n++;
   });
   return Object.values(tot).map(x => ({ ...x, total: r2(x.total), label: x.k === 'folha' ? 'Descontado na folha' : x.k === 'cartao' ? 'Cartão de crédito' : x.k === 'outros' ? 'Sem forma informada' : payLabel(x.k) })).sort((a, b) => b.total - a.total);
+}
+
+/* ----- lançamentos por trás dos números do resumo -----
+   kind 'despesa' ou 'receita', com a mesma regra de monthSummary/byCategory (cartão pela fatura; o que a folha paga conta
+   na despesa e, no mesmo valor, na receita). Devolve [{ t, itemId }]: na receita, o desconto em folha vem com a categoria da rubrica. */
+export function summaryTx(S, m, kind = 'despesa') {
+  const out = [];
+  S.tx.forEach(t => {
+    if (t.adj || t.reimb || (t.type === 'cred' && isThird(S, t))) return;
+    const isExp = (t.type === 'deb' && !t.cardPay && mOf(t.date) === m) || (t.type === 'cred' && txComp(S, t) === m);
+    if (kind === 'despesa') { if (isExp) out.push({ t, itemId: t.itemId }); return; }
+    if (t.type === 'rec' && mOf(t.date) === m) out.push({ t, itemId: t.itemId });
+    else if (isExp && t.folha) out.push({ t, itemId: t.folhaItem });
+  });
+  return out;
 }

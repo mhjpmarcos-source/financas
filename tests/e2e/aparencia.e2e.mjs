@@ -89,8 +89,8 @@ await p.click('#ltop [data-fk=desp]'); assert(!(await names()).includes('Receita
 await p.click('[data-fmore]'); await p.selectOption('#fl-cat', { label: 'Mercado' }); await p.click('#fl-ok'); assert.deepEqual(await names(), ['Despesa Exemplo']);
 await p.fill('#q', 'exemplo'); await wait(300); assert.deepEqual(await names(), ['Despesa Exemplo'], 'o filtro vale na busca'); await p.fill('#q', ''); await wait(300);
 await p.click('[data-fclear]'); assert((await names()).includes('Receita Exemplo'));
-await p.click('[data-tab=resumo]'); await p.click('.hcard [data-fk=rec]'); assert.equal(await p.getAttribute('[data-tab=lanc]', 'aria-current'), 'page'); assert.deepEqual(await names(), ['Receita Exemplo']);
-await p.click('[data-tab=resumo]'); await p.click('details.cat summary'); await p.click('[data-fcat]'); assert.equal(await p.locator('.fchip.on').count(), 1, 'categoria do Resumo vira filtro');
+await p.click('[data-tab=resumo]'); await p.click('.hcard [data-dr^="sum|receita"]'); await p.waitForSelector('#dr-lanc'); assert.match(await p.textContent('#dr-list'), /Receita Exemplo/); await p.click('#dr-lanc'); assert.equal(await p.getAttribute('[data-tab=lanc]', 'aria-current'), 'page'); assert.deepEqual(await names(), ['Receita Exemplo']);
+await p.click('[data-tab=resumo]'); await p.click('details.cat summary'); await p.click('details.cat [data-dr^="cat|"]'); await p.click('#dr-lanc'); assert.equal(await p.locator('.fchip.on').count(), 1, 'categoria do Resumo vira filtro');
 await p.click('[data-tab=agenda]'); await p.click('[data-tab=lanc]'); assert.equal(await p.locator('.fchip.on').count(), 0, 'trocar de aba limpa o filtro');
 
 // computador: nada passa da largura e, a partir de 1000 px, o resumo fica ao lado da lista; Esc fecha a folha

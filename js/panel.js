@@ -5,7 +5,7 @@
 import * as M from './model.js';
 import * as C from './calc.js';
 
-export const SETS = [['parc', 'Parcelas'], ['card', 'Compras no cartão'], ['fix', 'Fixas e assinaturas'], ['debt', 'Dívidas'], ['out', 'Todas as despesas'], ['in', 'Receitas']];
+export const SETS = [['parc', 'Parcelas'], ['card', 'Compras no cartão'], ['fix', 'Fixas e assinaturas'], ['debt', 'Dívidas'], ['folha', 'Descontado na folha'], ['out', 'Todas as despesas'], ['in', 'Receitas']];
 export const PERIODS = [['n12', 'Próximos 12 meses'], ['n6', 'Próximos 6 meses'], ['n3', 'Próximos 3 meses'], ['cur', 'Este mês'], ['p3', 'Últimos 3 meses'], ['p6', 'Últimos 6 meses'], ['p12', 'Últimos 12 meses'], ['y', 'Este ano']];
 export const GROUPS = [['desc', 'Compra ou conta'], ['acc', 'Conta ou cartão'], ['cat', 'Categoria'], ['who', 'Quem usou o cartão'], ['pay', 'Forma de pagamento']];
 /* atalhos: as perguntas mais comuns já montadas */
@@ -30,12 +30,12 @@ export function monthsOf(per, cur) {
 const isParc = t => !!t.parcKey || (!!t.seriesId && t.seriesKind !== 'rep');
 const inSet = (set, t) => set === 'in' ? t.type === 'rec'
   : t.type === 'rec' ? false
-  : set === 'parc' ? isParc(t) : set === 'card' ? t.type === 'cred' : set === 'fix' ? !!t.recId : set === 'debt' ? !!t.loanId : true;
+  : set === 'parc' ? isParc(t) && !t.loanId : set === 'card' ? t.type === 'cred' : set === 'fix' ? !!t.recId && !t.folha && !t.loanId : set === 'debt' ? !!t.loanId : set === 'folha' ? !!t.folha && !t.loanId : true;
 
 export function build(S, o, today = M.todayISO()) {
   const cur = today.slice(0, 7), months = monthsOf(o.per, cur), mi = new Set(months);
   const item = id => S.items.find(i => i.id === id), group = it => it && S.groups.find(g => g.id === it.groupId), acc = id => S.accounts.find(a => a.id === id);
-  const byMonth = Object.fromEntries(months.map(m => [m, 0])), groups = new Map();
+  const byMonth = Object.fromEntries(months.map(m => [m, 0])), monthIds = Object.fromEntries(months.map(m => [m, []])), groups = new Map();
   let total = 0, n = 0, prev = 0;
   for (const t of S.tx) {
     if (t.adj || t.reimb || t.cardPay || t.type === 'trf' || !inSet(o.set, t)) continue;
@@ -54,12 +54,12 @@ export function build(S, o, today = M.todayISO()) {
       label = h ? h.name + (h.reimb ? ' (devolve)' : '') : t.type === 'cred' ? `${a ? a.name : 'Cartão'}: sem nome cadastrado` : 'Fora do cartão'; color = h ? (h.reimb ? '#00897b' : '#7b55c7') : '#90a4ae'; }
     else if (o.group === 'pay') { const k = C.payOf(S, t); key = t.folha ? 'folha' : k || (t.type === 'cred' ? 'cartao' : '_'); label = t.folha ? 'Descontado na folha' : k ? C.payLabel(k) : t.type === 'cred' ? 'Cartão de crédito' : 'Sem forma informada'; color = /^pix/.test(k) ? '#00897b' : t.type === 'cred' ? '#607d8b' : '#5c6bc0'; }
     else { const d = (t.desc || (it ? it.name : '') || 'Sem descrição').replace(/\s*\(\d+\/\d+\)\s*$/, ''); key = (t.recId || t.parcKey || t.seriesId || t.loanId || '') + '|' + M.normDesc(d); label = d; }
-    let G = groups.get(key); if (!G) { G = { key, label, color, total: 0, n: 0, per: {}, lastM: m, parcN: 0, parcLeft: 0 }; groups.set(key, G); }
-    G.total += t.amount; G.n++; G.per[m] = (G.per[m] || 0) + t.amount; if (m > G.lastM) G.lastM = m;
+    let G = groups.get(key); if (!G) { G = { key, label, color, total: 0, n: 0, per: {}, lastM: m, parcN: 0, parcLeft: 0, ids: [] }; groups.set(key, G); }
+    G.total += t.amount; G.n++; G.ids.push(t.id); monthIds[m].push(t.id); G.per[m] = (G.per[m] || 0) + t.amount; if (m > G.lastM) G.lastM = m;
     if (isParc(t)) { G.parcN = Math.max(G.parcN, t.parcN || t.seriesN || 0); G.parcLeft++; }
     byMonth[m] += t.amount; total += t.amount; n++; if (t.prev || (t.status === 'pend' && t.type !== 'cred')) prev += t.amount;
   }
   const r2 = C.r2;
-  return { months, cur, total: r2(total), n, prev: r2(prev), byMonth: months.map(m => ({ m, total: r2(byMonth[m]) })),
+  return { months, cur, total: r2(total), n, prev: r2(prev), byMonth: months.map(m => ({ m, total: r2(byMonth[m]), ids: monthIds[m] })),
     groups: [...groups.values()].map(G => ({ ...G, total: r2(G.total), per: Object.fromEntries(Object.entries(G.per).map(([k, v]) => [k, r2(v)])) })).sort((a, b) => Math.abs(b.total) - Math.abs(a.total)) };
 }
