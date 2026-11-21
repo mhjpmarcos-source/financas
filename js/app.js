@@ -14,7 +14,7 @@ import * as H from './imp/holerite.js';
 import * as L from './link.js';
 import * as PH from './holder.js';
 
-export const VERSION = '0.12.1';
+export const VERSION = '0.13.0';
 const CID_KEY = 'fin.cfg.clientId';
 const clientId = () => (window.FIN_CONFIG && FIN_CONFIG.clientId) || (() => { try { return localStorage.getItem(CID_KEY) || ''; } catch { return ''; } })();
 
@@ -89,6 +89,14 @@ document.addEventListener('click', e => {
   const el = b.parentElement.querySelector('input'); if (!el) return;
   el.value = el.value.startsWith('-') ? el.value.slice(1) : '-' + el.value;
   el.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+/* Esc fecha a caixa de pergunta ou a folha aberta (teclado do computador) */
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[role=button][tabindex]')) { e.preventDefault(); return e.target.click(); }
+  if (e.key !== 'Escape' || document.body.classList.contains('locked')) return;
+  const ask = document.querySelector('.sheet.ask'); if (ask) { ask.click(); return; }
+  if (!$('#sheet').hidden) closeSheet();
 });
 
 async function boot() {
@@ -316,9 +324,9 @@ function render() {
   const title = ui.sub === 'cats' ? 'Categorias' : { lanc: 'Lançamentos', agenda: 'Agenda', resumo: 'Resumo', contas: 'Contas', ajustes: 'Ajustes' }[ui.tab];
   app().innerHTML = `<div class="shell"><header class="top">${ui.sub ? '<button class="back" id="back" aria-label="Voltar">‹</button>' : ''}<h1>${title}</h1><button class="eye" id="eye" aria-label="Esconder ou mostrar os valores"></button><button class="chip" id="chip"><i></i><span></span></button></header>
     <main class="page" id="page"></main>
-    ${ui.tab !== 'ajustes' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento">+</button>' : ''}
+    ${ui.tab !== 'ajustes' && !ui.sub ? '<button class="fab" id="fab" aria-label="Novo lançamento"><span aria-hidden="true">+</span><b>Novo lançamento</b></button>' : ''}
     <nav class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ICON[k]}<span>${l}</span></button>`).join('')}</nav></div>`;
-  app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.sub = null; ui.q = ''; render(); window.scrollTo(0, 0); } };
+  app().querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.sub = null; ui.q = ''; ui.f = null; render(); window.scrollTo(0, 0); } };
   $('#chip').onclick = chipAction;
   $('#eye').onclick = toggleDiscreet; applyDiscreet();
   if ($('#back')) $('#back').onclick = () => { ui.sub = null; render(); };
@@ -447,13 +455,59 @@ function askChoice(title, msg, options) {
 /* ----- lançamentos ----- */
 /* a busca atualiza só os resultados: trocar o campo a cada letra fazia o iPhone fechar e reabrir o teclado (e trocar o tipo dele) */
 let qTimer = null;
+/* filtros da lista: tipo (um por vez) + conta ou cartão, categoria e quem usou o cartão. Valem para o mês e para a busca. */
+const F0 = () => ({ kind: 'all', acc: '', cat: '', who: '' });
+const FK = [['all', 'Tudo'], ['rec', 'Receitas'], ['desp', 'Despesas'], ['cred', 'Cartão'], ['pend', 'Pendentes'], ['trf', 'Transferências'], ['nocat', 'Sem categoria']];
+const fOn = () => { const f = ui.f; return !!f && (f.kind !== 'all' || !!f.acc || !!f.cat || !!f.who); };
+function fMatch(t) {
+  const f = ui.f; if (!f) return true;
+  const k = f.kind;
+  if (k === 'rec' && t.type !== 'rec') return false;
+  if (k === 'desp' && !((t.type === 'deb' && !t.cardPay) || t.type === 'cred')) return false;
+  if (k === 'cred' && t.type !== 'cred') return false;
+  if (k === 'trf' && !(t.type === 'trf' || t.cardPay)) return false;
+  if (k === 'pend' && !(t.prev || (t.status === 'pend' && t.type !== 'cred'))) return false;
+  if (k === 'nocat' && (t.itemId || t.type === 'trf' || t.cardPay || t.reimb)) return false;
+  if (f.acc && t.accountId !== f.acc && t.toAccountId !== f.acc) return false;
+  if (f.cat === '_') { if (t.itemId || t.type === 'trf' || t.cardPay) return false; }
+  else if (f.cat.startsWith('g:')) { const it = itemById(t.itemId); if (!it || it.groupId !== f.cat.slice(2)) return false; }
+  else if (f.cat && t.itemId !== f.cat) return false;
+  if (f.who) { const [c, ref] = f.who.split('|'), h = t.accountId === c && PH.holderOf(S(), t); if (!h || h.ref !== ref) return false; }
+  return true;
+}
+const fCatName = c => c === '_' ? 'Sem categoria' : c.startsWith('g:') ? ((S().groups.find(g => g.id === c.slice(2)) || {}).name || '?') : ((itemById(c) || {}).name || '?');
+const fWhoName = w => { const [c, ref] = w.split('|'), a = accById(c), h = a && (a.holders || []).find(x => x.ref === ref); return h ? h.name : 'final ' + ref; };
+function filtHTML() {
+  const f = ui.f || F0();
+  const x = (k, label) => `<button class="fchip on" data-fx="${k}" aria-label="Tirar o filtro ${esc(label)}">${esc(label)} <span aria-hidden="true">✕</span></button>`;
+  return `<div class="fchips" id="lfilt-row">${FK.map(([k, l]) => `<button class="fchip" data-fk="${k}" aria-pressed="${f.kind === k}">${l}</button>`).join('')}</div>
+    <div class="fmore"><button class="fchip more" data-fmore>Conta, categoria…</button>${f.acc ? x('acc', (accById(f.acc) || {}).name || '?') : ''}${f.cat ? x('cat', fCatName(f.cat)) : ''}${f.who ? x('who', fWhoName(f.who)) : ''}${fOn() ? '<button class="link" data-fclear>Limpar filtros</button>' : ''}</div>`;
+}
+function setKind(k) { const f = ui.f || F0(); ui.f = { ...f, kind: f.kind === k ? 'all' : k }; }
+function filterSheet() {
+  const st = S(), f = ui.f || F0();
+  const accs = n => st.accounts.filter(a => a.nature === n && (a.active !== false || a.id === f.acc)).map(a => `<option value="${a.id}" ${a.id === f.acc ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const cats = kind => st.groups.filter(g => g.kind === kind).map(g => `<optgroup label="${esc(g.name)}"><option value="g:${g.id}" ${f.cat === 'g:' + g.id ? 'selected' : ''}>${esc(g.name)}: tudo</option>${st.items.filter(i => i.groupId === g.id).map(i => `<option value="${i.id}" ${i.id === f.cat ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</optgroup>`).join('');
+  const who = st.accounts.filter(a => a.nature === 'credito').flatMap(a => (a.holders || []).map(h => `<option value="${a.id}|${esc(h.ref)}" ${f.who === a.id + '|' + h.ref ? 'selected' : ''}>${esc(h.name)} · ${esc(a.name)} final ${esc(h.ref)}</option>`)).join('');
+  openSheet(`<h2>Filtrar lançamentos</h2><p class="hint">Vale para o mês da tela e para a busca. Combine com Receitas, Despesas, Cartão… na fila de cima.</p>
+    <label for="fl-acc">Conta ou cartão</label><select id="fl-acc"><option value="">Todas</option><optgroup label="Contas">${accs('debito')}</optgroup><optgroup label="Cartões">${accs('credito')}</optgroup></select>
+    <label for="fl-cat">Categoria</label><select id="fl-cat"><option value="">Todas</option><option value="_" ${f.cat === '_' ? 'selected' : ''}>Sem categoria</option>${cats('despesa')}${cats('receita')}</select>
+    ${who ? `<label for="fl-who">Quem usou o cartão</label><select id="fl-who"><option value="">Qualquer pessoa</option>${who}</select>` : ''}
+    <div class="actions"><button class="btn" id="fl-clear">Limpar</button><button class="btn primary" id="fl-ok">Aplicar</button></div>`, panel => {
+    panel.querySelector('#fl-clear').onclick = () => { ui.f = { ...(ui.f || F0()), acc: '', cat: '', who: '' }; closeSheet(); pageLanc(); };
+    panel.querySelector('#fl-ok').onclick = () => { const v = id => (panel.querySelector(id) || {}).value || ''; ui.f = { ...(ui.f || F0()), acc: v('#fl-acc'), cat: v('#fl-cat'), who: v('#fl-who') }; closeSheet(); pageLanc(); };
+  });
+}
+
 function pageLanc() {
   const q = ui.q || '', st = S();
   const hasCards = st.accounts.some(a => a.nature === 'credito' && a.active !== false);
   const qa = (k, label, extra) => `<button class="qa ${extra || ''}" data-qa="${k}"><i>${QI[k === 'pgto' ? 'fat' : k]}</i>${label}</button>`;
-  $('#page').innerHTML = `<div id="ltop">${lancTop()}</div>
-    <div class="quick" id="lquick"><button class="qa main" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)"><i>${QI.imp}</i>Importar</button>${qa('deb', 'Despesa')}${hasCards ? qa('cred', 'Compra no cartão') : ''}${qa('rec', 'Receita')}${qa('trf', 'Transferir')}${hasCards ? qa('pgto', 'Pagar fatura') : ''}</div>
-    <div class="search"><input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Buscar em todos os meses (nome ou valor)" value="${esc(q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div><div id="lbody">${lancBody()}</div>`;
+  // no celular: resumo, atalhos, busca, filtros, lista. Em tela larga, o resumo e os atalhos vão para a coluna da direita.
+  $('#page').innerHTML = `<div class="lpage"><aside class="lside"><div id="ltop">${lancTop()}</div>
+    <div class="quick" id="lquick"><button class="qa main" id="imp" title="Importar fatura, extrato ou contracheque (PDF, CSV, OFX)"><i>${QI.imp}</i>Importar</button>${qa('deb', 'Despesa')}${hasCards ? qa('cred', 'Compra no cartão') : ''}${qa('rec', 'Receita')}${qa('trf', 'Transferir')}${hasCards ? qa('pgto', 'Pagar fatura') : ''}</div></aside>
+    <div class="lmain"><div class="search"><input id="q" type="search" inputmode="search" enterkeyhint="search" placeholder="Buscar em todos os meses (nome ou valor)" value="${esc(q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+    <div id="lfilt">${filtHTML()}</div><div id="lbody">${lancBody()}</div></div></div>`;
   $('#imp').onclick = () => pickImportFile({});
   const qi = $('#q');
   qi.oninput = () => { ui.q = qi.value; clearTimeout(qTimer); qTimer = setTimeout(() => { const b = $('#lbody'), t = $('#ltop'); if (t) t.innerHTML = lancTop(); if (b) b.innerHTML = lancBody(); }, 120); };
@@ -461,6 +515,10 @@ function pageLanc() {
   $('#page').onclick = e => {
     if (monthNavClick(e, pageLanc)) return;
     const a = e.target.closest('[data-qa]'); if (a) return a.dataset.qa === 'pgto' ? payFaturaSheet(null, {}) : txSheet(null, { type: a.dataset.qa });
+    const fk = e.target.closest('[data-fk]'); if (fk) { setKind(fk.dataset.fk); return pageLanc(); }
+    const fx = e.target.closest('[data-fx]'); if (fx) { ui.f = { ...(ui.f || F0()), [fx.dataset.fx]: '' }; return pageLanc(); }
+    if (e.target.closest('[data-fclear]')) { ui.f = null; return pageLanc(); }
+    if (e.target.closest('[data-fmore]')) return filterSheet();
     if (e.target.closest('#rv-open')) return conferirSheet();
     const fi = e.target.closest('[data-fimp]'); if (fi) return pickImportFile({ accountId: fi.dataset.fimp });
     const fp = e.target.closest('[data-fpay]'); if (fp) return payFaturaSheet(null, { cardId: fp.dataset.fpay, comp: ui.month });
@@ -472,25 +530,33 @@ function pageLanc() {
 function lancTop() {
   if ((ui.q || '').trim()) return '';
   const st = S(), m = ui.month, sum = C.monthSummary(st, m);
-  return `<div class="hcard">${monthNav(m)}<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
-      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
+  const k = (ui.f || F0()).kind, kp = (key, label) => `<div class="kpi tap" data-fk="${key}" role="button" tabindex="0" aria-pressed="${k === key}" title="Ver só ${label.toLowerCase()} na lista"><small>${label} <span aria-hidden="true">›</span></small>`;
+  return `<div class="hcard">${monthNav(m)}<div class="kpis">${kp('rec', 'Receitas')}<b class="num pos">${C.brl(sum.rec)}</b></div>
+      ${kp('desp', 'Despesas')}<b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado do mês</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div>
       <p class="hint">Compras no cartão aparecem no mês da fatura.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha (não passam por conta).` : ''}${sum.terc ? ` ${C.brl(sum.terc)} em compras de quem devolve o dinheiro não contam como despesa sua.` : ''}</p></div>`;
 }
 function lancBody() {
-  const st = S(), m = ui.month, q = ui.q || '';
+  const st = S(), m = ui.month, q = ui.q || '', on = fOn();
+  const sumLine = l => { const inn = l.filter(t => t.type === 'rec').reduce((a, t) => a + t.amount, 0), out = l.filter(t => (t.type === 'deb' && !t.cardPay) || t.type === 'cred').reduce((a, t) => a + t.amount, 0);
+    return `<p class="hint fsum">Filtro: <b>${l.length}</b> lançamento${l.length === 1 ? '' : 's'}${inn ? ` · entradas <b class="num pos">${C.brl(inn)}</b>` : ''}${out ? ` · saídas <b class="num neg">${C.brl(out)}</b>` : ''}</p>`; };
+  const none = where => `<div class="card empty">Nada com este filtro ${where}.<br><button class="link" data-fclear>Limpar filtros</button></div>`;
   let html = '';
   if (q.trim()) {
-    const res = C.search(st, q);
-    html += `<p class="hint">${res.length ? res.length + ' resultado(s)' : 'Nada encontrado.'}${res.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
+    const all = C.search(st, q), res = all.filter(fMatch);
+    html += `<p class="hint">${all.length ? all.length + ' resultado(s)' : 'Nada encontrado.'}${all.length === 200 ? ' (mostrando os 200 mais recentes)' : ''}</p>`;
+    if (on && all.length) html += res.length ? sumLine(res) : none('na busca');
     if (res.length) html += `<div class="card" style="padding-top:2px"><ul class="list">${res.map(t => txRow(t, true)).join('')}</ul></div>`;
   } else {
-    const list = st.tx.filter(t => ['rec', 'deb', 'trf'].includes(t.type) ? C.mOf(t.date) === m : t.type === 'cred' ? C.txComp(st, t) === m : false)
+    const month = st.tx.filter(t => ['rec', 'deb', 'trf'].includes(t.type) ? C.mOf(t.date) === m : t.type === 'cred' ? C.txComp(st, t) === m : false)
       .sort((a, b) => (b.date.localeCompare(a.date)) || ((b.created || 0) - (a.created || 0)));
+    const list = month.filter(fMatch);
     const rv = L.review(st);
-    if (rv.n) html += `<button class="banner" id="rv-open"><span class="grow"><b>${rv.n} lançamento${rv.n > 1 ? 's' : ''} para conferir</b><small>${[rv.pay.length + rv.relink.length ? 'pagamento de fatura lançado como despesa' : '', rv.refund.length ? 'pix devolvido' : '', rv.nocat.length ? 'sem categoria' : ''].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">›</span></button>`;
-    if (!list.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar ou em <b>Importar</b> para trazer uma fatura ou um extrato.</div>`;
+    if (rv.n && !on) html += `<button class="banner" id="rv-open"><span class="grow"><b>${rv.n} lançamento${rv.n > 1 ? 's' : ''} para conferir</b><small>${[rv.pay.length + rv.relink.length ? 'pagamento de fatura lançado como despesa' : '', rv.refund.length ? 'pix devolvido' : '', rv.nocat.length ? 'sem categoria' : ''].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">›</span></button>`;
+    if (!month.length) html += `<div class="card empty">Nenhum lançamento neste mês.<br>Toque em <b>+</b> para lançar ou em <b>Importar</b> para trazer uma fatura ou um extrato.</div>`;
+    else if (!list.length) html += none('neste mês');
     else {
+      if (on) html += sumLine(list);
       const inAcc = list.filter(t => t.type !== 'cred'), inCard = list.filter(t => t.type === 'cred');
       if (inAcc.length) {
         let day = '';
@@ -504,8 +570,8 @@ function lancBody() {
       // compras no cartão: uma seção por fatura, com a data de cada compra na linha (parcelas antigas não se misturam aos dias do mês)
       st.accounts.filter(a => a.nature === 'credito').forEach(card => {
         const rows = inCard.filter(t => t.accountId === card.id); if (!rows.length) return;
-        const f = C.faturaOf(st, card.id, m), prevN = rows.filter(t => t.prev).length;
-        html += `<details class="card fat" open><summary><span class="grow"><b>Fatura ${esc(card.name)}</b><small>${rows.length} compra${rows.length > 1 ? 's' : ''}${prevN ? ` · ${prevN} prevista${prevN > 1 ? 's' : ''}` : ''} · vence ${C.fmtD(f.date)} · ${f.status === 'liq' ? 'paga' : f.status === 'parc' ? 'paga em parte' : 'em aberto'}</small></span><span class="num">−${C.brl(f.total)}</span></summary>
+        const f = C.faturaOf(st, card.id, m), prevN = rows.filter(t => t.prev).length, part = on ? C.r2(rows.reduce((a, t) => a + t.amount, 0)) : f.total;
+        html += `<details class="card fat" open><summary><span class="grow"><b>Fatura ${esc(card.name)}</b><small>${rows.length} compra${rows.length > 1 ? 's' : ''}${on ? ' no filtro' : ''}${prevN ? ` · ${prevN} prevista${prevN > 1 ? 's' : ''}` : ''} · vence ${C.fmtD(f.date)} · ${f.status === 'liq' ? 'paga' : f.status === 'parc' ? 'paga em parte' : 'em aberto'}</small></span><span class="num">−${C.brl(part)}</span></summary>
           <div class="fatacts"><button class="btn small" data-fat="${card.id}">Abrir a fatura</button><button class="btn small" data-fimp="${card.id}">Importar</button>${f.status !== 'liq' && f.total > 0 ? `<button class="btn small" data-fpay="${card.id}">Pagar</button>` : ''}</div>
           <ul class="list">${rows.map(t => txRow(t, true, true)).join('')}</ul></details>`;
       });
@@ -1088,11 +1154,11 @@ function pageAgenda() {
     html += `<div class="kpis two"><div class="kpi"><small>A receber (até 30 dias)</small><b class="num pos">${C.brl(sum(nextAll, 'in'))}</b></div>
       <div class="kpi"><small>A pagar (até 30 dias)</small><b class="num neg">${C.brl(sum(nextAll, 'out'))}</b></div></div></div>`;
     const block = (title, list, cls) => list.length ? `<div class="card ${cls || ''}"><h2>${title} <span class="hint">(${list.length})</span></h2><ul class="list full">${list.slice(0, 60).map(pendRow).join('')}</ul>${list.length > 60 ? `<p class="hint">e mais ${list.length - 60}…</p>` : ''}</div>` : '';
-    html += block('Atrasados', late, 'late') + block('Próximos 30 dias', next) + block('Mais adiante', later);
+    html += '<div class="cgrid">' + block('Atrasados', late, 'late') + block('Próximos 30 dias', next) + block('Mais adiante', later);
     if (!all.length) html += `<div class="card empty">Nada pendente.<br>Receitas e despesas marcadas como pendentes, parcelas de dívidas e faturas em aberto aparecem aqui.</div>`;
     if (all.length) html += `<div class="card"><h2>Lembretes no celular</h2><p class="hint">Baixe os vencimentos dos próximos 12 meses para o calendário do iPhone (ou do computador), com aviso às 9h do dia anterior. Ao abrir o arquivo, toque em "Adicionar todos". Se baixar de novo depois, os eventos repetidos são atualizados.</p>
       <button class="btn" id="ag-ics">Adicionar vencimentos ao calendário</button></div>`;
-    html += `<p class="hint">Contas que se repetem todo mês (aluguel, internet, luz, salário) ficam em <b>Fixas e parcelas</b>, e os meses aparecem aqui.</p>`;
+    html += `</div><p class="hint">Contas que se repetem todo mês (aluguel, internet, luz, salário) ficam em <b>Fixas e parcelas</b>, e os meses aparecem aqui.</p>`;
   } else {
     const folhaSt = l => { const f = H.loanInfo(st, l); return { folha: f, rest: f.ended ? 0 : f.rest || 0, paid: f.i || 0, total: f.n || 0, parcels: [], doneN: f.paidN, next: null, late: 0 }; };
     const loans = st.loans.map(l => ({ l, s: l.folha ? folhaSt(l) : M.loanStatus(st, l) }));
@@ -1455,22 +1521,22 @@ function pageResumo() {
       <rect x="${x0 + bw + 2}" y="${H - 20 - hd}" width="${bw}" height="${hd}" rx="3" class="b-desp"><title>Despesas ${shortM(x.m)}: ${C.brl(x.desp)}</title></rect>
       <text x="${i * gap + gap / 2}" y="${H - 5}" text-anchor="middle" class="ax ${x.m === m ? 'cur' : ''}">${shortM(x.m)}</text>`;
   }).join('');
-  const catHTML = (list, total) => list.length ? list.map(g => `<details class="cat"><summary><span class="sw" style="background:${g.color}"></span><span class="grow">${esc(g.name)}</span><span class="num">${C.brl(g.total)}</span></summary>
+  const catHTML = (list, total, kind) => list.length ? list.map(g => `<details class="cat"><summary><span class="sw" style="background:${g.color}"></span><span class="grow">${esc(g.name)}</span><span class="num">${C.brl(g.total)}</span></summary>
       <div class="bar"><i style="width:${Math.max(2, g.total / total * 100).toFixed(1)}%;background:${g.color}"></i></div>
-      <ul class="sublist">${g.items.map(i => `<li><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span></li>`).join('')}</ul></details>`).join('')
+      <ul class="sublist go">${g.items.map(i => `<li data-fcat="${i.id}" data-fkind="${kind}" role="button" title="Ver estes lançamentos"><span class="grow">${esc(i.name)} <small class="hint">(${i.n})</small></span><span class="num">${C.brl(i.total)}</span><span class="chev" aria-hidden="true">›</span></li>`).join('')}</ul></details>`).join('')
     : '<p class="hint">Nada neste mês.</p>';
   const b = C.budgetMonth(st, m);
-  $('#page').innerHTML = '<div class="hcard">' + seg + monthNav(m) + `<div class="kpis"><div class="kpi"><small>Receitas</small><b class="num pos">${C.brl(sum.rec)}</b></div>
-      <div class="kpi"><small>Despesas</small><b class="num neg">${C.brl(sum.desp)}</b></div>
+  $('#page').innerHTML = '<div class="hcard">' + seg + monthNav(m) + `<div class="kpis"><div class="kpi tap" data-fk="rec" role="button" tabindex="0" title="Ver as receitas do mês"><small>Receitas <span aria-hidden="true">›</span></small><b class="num pos">${C.brl(sum.rec)}</b></div>
+      <div class="kpi tap" data-fk="desp" role="button" tabindex="0" title="Ver as despesas do mês"><small>Despesas <span aria-hidden="true">›</span></small><b class="num neg">${C.brl(sum.desp)}</b></div>
       <div class="kpi"><small>Resultado do mês</small><b class="num ${sum.saldo < 0 ? 'neg' : ''}">${C.brl(sum.saldo)}</b></div></div></div>
     ${b.plan ? `<p class="hint">Orçamento de despesas: ${C.brl(b.plan)} · gasto ${C.brl(b.real)} (${Math.round(b.real / b.plan * 100)}%).</p>` : ''}
     <p class="hint"><b>Resultado</b> = receitas − despesas do mês (inclui o que ainda está previsto). Não é o saldo da conta: esse fica em Contas.${sum.folha ? ` Receitas e despesas incluem ${C.brl(sum.folha)} pagos pela folha.` : ''}</p>
     ${inv.aportes || inv.resgates ? `<p class="okbox" id="rs-inv">Investido no mês: ${C.brl(inv.net)}${inv.resgates ? ` (aportes ${C.brl(inv.aportes)} − resgates ${C.brl(inv.resgates)})` : ''}. É transferência: não entra nas despesas.</p>` : ''}
     ${(() => { const mh = PH.monthByHolder(st, m); return mh.length ? `<div class="card"><h2>Por quem usou o cartão</h2><ul class="list calc">${mh.map(o => `<li><span class="grow">${esc(PH.label(o.h))} <small class="hint">${esc(o.card.name)} · ${o.n} compra${o.n > 1 ? 's' : ''}</small>${o.h.reimb ? ' <span class="tag who reimb">devolve</span>' : ''}</span><span class="num">${C.brl(o.total)}</span></li>`).join('')}</ul>${sum.terc ? `<p class="hint">${C.brl(sum.terc)} de quem devolve o dinheiro ficam fora das suas despesas; o reembolso também não conta como receita.</p>` : ''}</div>` : ''; })()}
-    <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1)}</div>
+    <div class="cols"><div class="card"><h2>Despesas por grupo</h2>${catHTML(cats, sum.desp || 1, 'desp')}</div>
     <div><div class="card"><h2>Últimos 6 meses</h2><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Receitas e despesas dos últimos 6 meses">${bars}</svg>
       <p class="legend"><span class="sw b-rec"></span>Receitas <span class="sw b-desp"></span>Despesas</p></div>
-    <div class="card"><h2>Receitas</h2>${catHTML(recs, sum.rec || 1)}</div></div></div>`;
+    <div class="card"><h2>Receitas</h2>${catHTML(recs, sum.rec || 1, 'rec')}</div></div></div>`;
   bindResumo(pageResumo);
 }
 
@@ -1478,6 +1544,9 @@ function bindResumo(redraw) {
   $('#page').onclick = e => {
     const v = e.target.closest('[data-rv]'); if (v) { ui.rsView = v.dataset.rv; return pageResumo(); }
     if (monthNavClick(e, redraw)) return;
+    // receitas, despesas e cada categoria abrem os Lançamentos do mês já filtrados
+    const fk = e.target.closest('[data-fk]'), fc = e.target.closest('[data-fcat]');
+    if (fk || fc) { ui.f = fk ? { ...F0(), kind: fk.dataset.fk } : { ...F0(), kind: fc.dataset.fkind, cat: fc.dataset.fcat }; ui.tab = 'lanc'; ui.q = ''; render(); return window.scrollTo(0, 0); }
     const y = e.target.closest('[data-y]'); if (y) { ui.year = (ui.year || +M.todayISO().slice(0, 4)) + +y.dataset.y; return redraw(); }
     const bi = e.target.closest('[data-bi]'); if (bi) return budgetSheet(bi.dataset.bi);
     if (e.target.id === 'b-add') return budgetSheet(null);
@@ -1860,7 +1929,7 @@ function fixasHTML(st) {
   const P = C.parcelSummary(st, today);
   const head = `<div class="kpis two"><div class="kpi"><small>Saídas fixas e variáveis / mês</small><b class="num neg">${C.brl(sum(out))}</b></div><div class="kpi"><small>Entradas fixas e variáveis / mês</small><b class="num pos">${C.brl(sum(inc))}</b></div></div>`;
   let html = `<div class="newrow"><button class="btn" id="fx-new">+ Despesa que se repete</button><button class="btn" id="fx-new-rec">+ Receita que se repete</button><button class="btn" id="fx-new-parc">+ Parcelado</button></div>`;
-  html += jobsHTML(st);
+  html += '<div class="cgrid">' + jobsHTML(st);
   html += block('Despesas fixas', out.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, sem data para acabar, até você encerrar.')
     + block('Despesas variáveis', out.filter(x => x.r.kind === 'var'), 'Sempre existem, mas o valor muda. O previsto é a média dos 3 últimos meses pagos.')
     + block('Receitas fixas', inc.filter(x => x.r.kind === 'fixa'), 'Mesmo valor todo mês, até você encerrar. A renda do emprego é corrigida pelo contracheque.')
@@ -1874,7 +1943,7 @@ function fixasHTML(st) {
     <ul class="list wrap">${P.map(p => `<li data-ptx="${p.firstId}"><span class="t"><b>${esc(p.desc)}</b><small>${esc((accById(p.accountId) || {}).name || '')} · faltam ${p.open} de ${p.n} · ${C.brl(p.parcel)} por mês · até ${shortM(p.until)}${p.prev ? ` · ${p.prev} prevista(s)` : ''}</small></span><span class="num">${C.brl(p.rest)}</span></li>`).join('')}</ul>`
     : '<p class="hint">Nenhuma compra parcelada em aberto. Ao lançar, escolha "Parcelada" (até 36x, no cartão ou na conta); ao importar uma fatura, as parcelas futuras entram como previstas.</p>'}</div>`;
   ui._sug = sug;
-  return { head, body: html };
+  return { head, body: html + '</div>' };
 }
 
 function recSheet(id) {
@@ -2339,7 +2408,7 @@ function lookCardHTML() {
 function pageAjustes() {
   const st = S(), info = sync.syncInfo();
   const signed = auth.isSignedIn();
-  $('#page').innerHTML = `
+  $('#page').innerHTML = `<div class="cgrid">
     <div class="card"><h2>Conta Google</h2><p class="hint">${info.email ? `Dados guardados no Drive de <b>${esc(info.email)}</b>, pasta <b>${esc(drive.FOLDER)}</b>.` : (signed ? 'Conectado. Identificando a conta…' : 'Não conectado neste momento. Os dados continuam salvos neste aparelho.')}</p>
       <div id="syncBox">${syncBoxHTML()}</div>
       <div class="row"><button class="btn" data-act="sync">Sincronizar agora</button>${signed ? '' : '<button class="btn primary" data-act="reconnect">Reconectar</button>'}</div></div>
@@ -2356,7 +2425,7 @@ function pageAjustes() {
       <div class="row"><select id="exp-y" style="flex:1">${expYears().map(y => `<option value="${y}">${y === 'all' ? 'Todos os lançamentos' : y}</option>`).join('')}</select><button class="btn" data-act="csv">Baixar CSV</button></div>
       <input type="file" id="impfile" accept=".json,application/json" hidden></div>
     <div class="card"><h2>Este aparelho</h2><p class="hint">Sair desconecta o Google. Remover apaga a cópia deste aparelho; os dados continuam no Drive.</p>
-      <div class="row"><button class="btn" data-act="logout">Sair</button><button class="btn danger" data-act="forget">Remover dados deste aparelho</button></div></div>
+      <div class="row"><button class="btn" data-act="logout">Sair</button><button class="btn danger" data-act="forget">Remover dados deste aparelho</button></div></div></div>
     <p class="hint" style="text-align:center">Níquel ${VERSION}</p>`;
   $('#impfile').onchange = ev => importFile(ev.target.files[0], false);
   bindSecurity();

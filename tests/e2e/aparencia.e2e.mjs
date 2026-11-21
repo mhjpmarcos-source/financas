@@ -77,6 +77,32 @@ for (const [vw, vh] of [[390, 664], [320, 568]]) {
   await p.click('[data-tab=agenda]'); await p.click('#agseg [data-v=loans]'); await p.click('[data-newloan=out]'); await p.waitForSelector('#l-save'); assert.deepEqual(await wide(), [], `largura na dívida (${vw})`); await p.click('#sheet-x');
   await p.click('#agseg [data-v=pend]');
 }
+// filtros: a fila, os números do alto e o Resumo levam à lista filtrada
+await p.setViewportSize({ width: 390, height: 664 }); await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.click('#seg [data-type=rec]'); await p.fill('#f-val', '900'); await p.fill('#f-desc', 'Receita Exemplo'); await p.selectOption('#f-item', { label: 'Salário' }); await p.click('#f-save'); await wait(300);
+await p.click('#fab'); await p.fill('#f-val', '70'); await p.fill('#f-desc', 'Despesa Exemplo'); await p.selectOption('#f-item', { label: 'Mercado' }); await p.click('#f-save'); await wait(300);
+const names = () => p.$$eval('#lbody li[data-tx] .t b', l => l.map(x => x.textContent));
+assert((await names()).includes('Receita Exemplo') && (await names()).includes('Despesa Exemplo'));
+await p.click('#lfilt [data-fk=rec]'); assert.deepEqual(await names(), ['Receita Exemplo']); assert.match(await p.textContent('.fsum'), /1.*lançamento.*900,00/);
+await p.click('#ltop [data-fk=desp]'); assert(!(await names()).includes('Receita Exemplo')); assert.equal(await p.getAttribute('#lfilt [data-fk=desp]', 'aria-pressed'), 'true');
+await p.click('[data-fmore]'); await p.selectOption('#fl-cat', { label: 'Mercado' }); await p.click('#fl-ok'); assert.deepEqual(await names(), ['Despesa Exemplo']);
+await p.fill('#q', 'exemplo'); await wait(300); assert.deepEqual(await names(), ['Despesa Exemplo'], 'o filtro vale na busca'); await p.fill('#q', ''); await wait(300);
+await p.click('[data-fclear]'); assert((await names()).includes('Receita Exemplo'));
+await p.click('[data-tab=resumo]'); await p.click('.hcard [data-fk=rec]'); assert.equal(await p.getAttribute('[data-tab=lanc]', 'aria-current'), 'page'); assert.deepEqual(await names(), ['Receita Exemplo']);
+await p.click('[data-tab=resumo]'); await p.click('details.cat summary'); await p.click('[data-fcat]'); assert.equal(await p.locator('.fchip.on').count(), 1, 'categoria do Resumo vira filtro');
+await p.click('[data-tab=agenda]'); await p.click('[data-tab=lanc]'); assert.equal(await p.locator('.fchip.on').count(), 0, 'trocar de aba limpa o filtro');
+
+// computador: nada passa da largura e, a partir de 1000 px, o resumo fica ao lado da lista; Esc fecha a folha
+for (const [vw, vh] of [[834, 1112], [1024, 768], [1280, 800], [1440, 900], [1728, 1117], [1920, 1080], [2560, 1440]]) {
+  await p.setViewportSize({ width: vw, height: vh });
+  for (const t of ['lanc', 'agenda', 'resumo', 'contas', 'ajustes']) { await p.click(`[data-tab=${t}]`); await wait(60); assert.deepEqual(await wide(), [], `largura em ${t} (${vw})`); }
+  await p.click('[data-tab=lanc]');
+  const side = await p.locator('.lside').boundingBox(), main = await p.locator('.lmain').boundingBox(), tabs = await p.locator('.tabs').boundingBox();
+  assert.equal(side.x > main.x + main.width - 1, vw >= 1000, `resumo ao lado da lista (${vw})`); assert(tabs.x === 0 && tabs.height >= vh - 1, `menu na lateral (${vw})`);
+  assert(main.width >= 440, `lista com largura útil (${vw}: ${Math.round(main.width)})`);
+  await p.click('#fab'); await p.waitForSelector('#f-save'); await wait(60); assert.deepEqual(await wide(), [], `largura na folha (${vw})`); assert(await inView('#f-save'));
+  await p.keyboard.press('Escape'); assert.equal(await p.isHidden('#sheet'), true, 'Esc fecha a folha');
+}
+
 // o campo de data segue a largura dos outros campos
 await p.setViewportSize({ width: 390, height: 664 }); await p.click('[data-tab=lanc]'); await p.click('#fab'); await p.waitForSelector('#f-date');
 const bw = async s => Math.round((await p.locator(s).boundingBox()).width); assert.equal(await bw('#f-date'), await bw('#f-desc'), 'data com a mesma largura da descrição'); await p.click('#sheet-x');
